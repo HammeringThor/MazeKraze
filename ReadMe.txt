@@ -13,6 +13,12 @@
 //
 //=====================================================================================================
 
-To run open MazeKraze.html in a Chrome Browser.  
+To run: 
+Open MazeKraze.html in a Chrome Browser.  
+
+Click the download buttons to save PNG map files and JSON files.
+
+Click the test server link to test your saved mazes.
 
 NOTE: All maps use the same 2 JSON files so you only need to download them once.
+
