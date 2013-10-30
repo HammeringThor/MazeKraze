@@ -1,0 +1,2382 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!--
+//=====================================================================================================
+//                                          
+// @name          Maze Kraze                                         
+//                                  
+// @description   Map Generator for TagPro.  Generates a maze into PNG map files.             
+// @author        kr
+// @namespace     http://www.reddit.com/user/HammeringThor
+// @version       1.0                         
+// @license       GPL version 3 or any later version; http://www.gnu.org/copyleft/gpl.html
+//                                                                    
+//  This site is my contribution to a community-driven software project and as such comes with no guarantees.               
+//        
+//
+//=====================================================================================================
+-->
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" id="MazeKraze">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>Maze Kraze generator</title>
+<!-- Start open source JS:  PNGlib(create client-side PNG files) & Base64 encode  -->
+<script type="text/javascript">
+<!--
+    /**
+    * A handy class to calculate color values.
+    *
+    * @version 1.0
+    * @author Robert Eisele <robert@xarg.org>
+    * @copyright Copyright (c) 2010, Robert Eisele
+    * @link http://www.xarg.org/2010/03/generate-client-side-png-files-using-javascript/
+    * @license http://www.opensource.org/licenses/bsd-license.php BSD License
+    *
+    */
+
+    (function () {
+
+        // helper functions for that ctx
+        function write(buffer, offs) {
+            for (var i = 2; i < arguments.length; i++) {
+                for (var j = 0; j < arguments[i].length; j++) {
+                    buffer[offs++] = arguments[i].charAt(j);
+                }
+            }
+        }
+
+        function byte2(w) {
+            return String.fromCharCode((w >> 8) & 255, w & 255);
+        }
+
+        function byte4(w) {
+            return String.fromCharCode((w >> 24) & 255, (w >> 16) & 255, (w >> 8) & 255, w & 255);
+        }
+
+        function byte2lsb(w) {
+            return String.fromCharCode(w & 255, (w >> 8) & 255);
+        }
+
+        window.PNGlib = function (width, height, depth) {
+
+            this.width = width;
+            this.height = height;
+            this.depth = depth;
+
+            // pixel data and row filter identifier size
+            this.pix_size = height * (width + 1);
+
+            // deflate header, pix_size, block headers, adler32 checksum
+            this.data_size = 2 + this.pix_size + 5 * Math.floor((0xfffe + this.pix_size) / 0xffff) + 4;
+
+            // offsets and sizes of Png chunks
+            this.ihdr_offs = 0; 								// IHDR offset and size
+            this.ihdr_size = 4 + 4 + 13 + 4;
+            this.plte_offs = this.ihdr_offs + this.ihdr_size; // PLTE offset and size
+            this.plte_size = 4 + 4 + 3 * depth + 4;
+            this.trns_offs = this.plte_offs + this.plte_size; // tRNS offset and size
+            this.trns_size = 4 + 4 + depth + 4;
+            this.idat_offs = this.trns_offs + this.trns_size; // IDAT offset and size
+            this.idat_size = 4 + 4 + this.data_size + 4;
+            this.iend_offs = this.idat_offs + this.idat_size; // IEND offset and size
+            this.iend_size = 4 + 4 + 4;
+            this.buffer_size = this.iend_offs + this.iend_size; // total PNG size
+
+            this.buffer = new Array();
+            this.palette = new Object();
+            this.pindex = 0;
+
+            var _crc32 = new Array();
+
+            // initialize buffer with zero bytes
+            for (var i = 0; i < this.buffer_size; i++) {
+                this.buffer[i] = "\x00";
+            }
+
+            // initialize non-zero elements
+            write(this.buffer, this.ihdr_offs, byte4(this.ihdr_size - 12), 'IHDR', byte4(width), byte4(height), "\x08\x03");
+            write(this.buffer, this.plte_offs, byte4(this.plte_size - 12), 'PLTE');
+            write(this.buffer, this.trns_offs, byte4(this.trns_size - 12), 'tRNS');
+            write(this.buffer, this.idat_offs, byte4(this.idat_size - 12), 'IDAT');
+            write(this.buffer, this.iend_offs, byte4(this.iend_size - 12), 'IEND');
+
+            // initialize deflate header
+            var header = ((8 + (7 << 4)) << 8) | (3 << 6);
+            header += 31 - (header % 31);
+
+            write(this.buffer, this.idat_offs + 8, byte2(header));
+
+            // initialize deflate block headers
+            for (var i = 0; (i << 16) - 1 < this.pix_size; i++) {
+                var size, bits;
+                if (i + 0xffff < this.pix_size) {
+                    size = 0xffff;
+                    bits = "\x00";
+                } else {
+                    size = this.pix_size - (i << 16) - i;
+                    bits = "\x01";
+                }
+                write(this.buffer, this.idat_offs + 8 + 2 + (i << 16) + (i << 2), bits, byte2lsb(size), byte2lsb(~size));
+            }
+
+            /* Create crc32 lookup table */
+            for (var i = 0; i < 256; i++) {
+                var c = i;
+                for (var j = 0; j < 8; j++) {
+                    if (c & 1) {
+                        c = -306674912 ^ ((c >> 1) & 0x7fffffff);
+                    } else {
+                        c = (c >> 1) & 0x7fffffff;
+                    }
+                }
+                _crc32[i] = c;
+            }
+
+            // compute the index into a png for a given pixel
+            this.index = function (x, y) {
+                var i = y * (this.width + 1) + x + 1;
+                var j = this.idat_offs + 8 + 2 + 5 * Math.floor((i / 0xffff) + 1) + i;
+                return j;
+            }
+
+            // convert a color and build up the palette
+            this.color = function (red, green, blue, alpha) {
+
+                alpha = alpha >= 0 ? alpha : 255;
+                var color = (((((alpha << 8) | red) << 8) | green) << 8) | blue;
+
+                if (typeof this.palette[color] == "undefined") {
+                    if (this.pindex == this.depth) return "\x00";
+
+                    var ndx = this.plte_offs + 8 + 3 * this.pindex;
+
+                    this.buffer[ndx + 0] = String.fromCharCode(red);
+                    this.buffer[ndx + 1] = String.fromCharCode(green);
+                    this.buffer[ndx + 2] = String.fromCharCode(blue);
+                    this.buffer[this.trns_offs + 8 + this.pindex] = String.fromCharCode(alpha);
+
+                    this.palette[color] = String.fromCharCode(this.pindex++);
+                }
+                return this.palette[color];
+            }
+
+            // output a PNG string, Base64 encoded
+            this.getBase64 = function () {
+
+                var s = this.getDump();
+
+                var ch = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+                var c1, c2, c3, e1, e2, e3, e4;
+                var l = s.length;
+                var i = 0;
+                var r = "";
+
+                do {
+                    c1 = s.charCodeAt(i);
+                    e1 = c1 >> 2;
+                    c2 = s.charCodeAt(i + 1);
+                    e2 = ((c1 & 3) << 4) | (c2 >> 4);
+                    c3 = s.charCodeAt(i + 2);
+                    if (l < i + 2) { e3 = 64; } else { e3 = ((c2 & 0xf) << 2) | (c3 >> 6); }
+                    if (l < i + 3) { e4 = 64; } else { e4 = c3 & 0x3f; }
+                    r += ch.charAt(e1) + ch.charAt(e2) + ch.charAt(e3) + ch.charAt(e4);
+                } while ((i += 3) < l);
+                return r;
+            }
+
+            // output a PNG string
+            this.getDump = function () {
+
+                // compute adler32 of output pixels + row filter bytes
+                var BASE = 65521; /* largest prime smaller than 65536 */
+                var NMAX = 5552;  /* NMAX is the largest n such that 255n(n+1)/2 + (n+1)(BASE-1) <= 2^32-1 */
+                var s1 = 1;
+                var s2 = 0;
+                var n = NMAX;
+
+                for (var y = 0; y < this.height; y++) {
+                    for (var x = -1; x < this.width; x++) {
+                        s1 += this.buffer[this.index(x, y)].charCodeAt(0);
+                        s2 += s1;
+                        if ((n -= 1) == 0) {
+                            s1 %= BASE;
+                            s2 %= BASE;
+                            n = NMAX;
+                        }
+                    }
+                }
+                s1 %= BASE;
+                s2 %= BASE;
+                write(this.buffer, this.idat_offs + this.idat_size - 8, byte4((s2 << 16) | s1));
+
+                // compute crc32 of the PNG chunks
+                function crc32(png, offs, size) {
+                    var crc = -1;
+                    for (var i = 4; i < size - 4; i += 1) {
+                        crc = _crc32[(crc ^ png[offs + i].charCodeAt(0)) & 0xff] ^ ((crc >> 8) & 0x00ffffff);
+                    }
+                    write(png, offs + size - 4, byte4(crc ^ -1));
+                }
+
+                crc32(this.buffer, this.ihdr_offs, this.ihdr_size);
+                crc32(this.buffer, this.plte_offs, this.plte_size);
+                crc32(this.buffer, this.trns_offs, this.trns_size);
+                crc32(this.buffer, this.idat_offs, this.idat_size);
+                crc32(this.buffer, this.iend_offs, this.iend_size);
+
+                // convert PNG to string
+                return "\211PNG\r\n\032\n" + this.buffer.join('');
+            }
+        }
+
+
+    })();
+
+
+    /**
+    *  Base64 encode  
+    *  http://www.webtoolkit.info/
+    **/
+    var Base64 = {
+        // private property
+        _keyStr: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+
+        // public method for encoding
+        encode: function (input) {
+            var output = "";
+            var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
+            var i = 0;
+
+            input = Base64._utf8_encode(input);
+
+            while (i < input.length) {
+
+                chr1 = input.charCodeAt(i++);
+                chr2 = input.charCodeAt(i++);
+                chr3 = input.charCodeAt(i++);
+
+                enc1 = chr1 >> 2;
+                enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+                enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
+                enc4 = chr3 & 63;
+
+                if (isNaN(chr2)) {
+                    enc3 = enc4 = 64;
+                } else if (isNaN(chr3)) {
+                    enc4 = 64;
+                }
+
+                output = output +
+    Base64._keyStr.charAt(enc1) + Base64._keyStr.charAt(enc2) +
+    Base64._keyStr.charAt(enc3) + Base64._keyStr.charAt(enc4);
+
+            }
+
+            return output;
+        },
+
+        // private method for UTF-8 encoding
+        _utf8_encode: function (string) {
+            string = string.replace(/\r\n/g, "\n");
+            var utftext = "";
+
+            for (var n = 0; n < string.length; n++) {
+
+                var c = string.charCodeAt(n);
+
+                if (c < 128) {
+                    utftext += String.fromCharCode(c);
+                }
+                else if ((c > 127) && (c < 2048)) {
+                    utftext += String.fromCharCode((c >> 6) | 192);
+                    utftext += String.fromCharCode((c & 63) | 128);
+                }
+                else {
+                    utftext += String.fromCharCode((c >> 12) | 224);
+                    utftext += String.fromCharCode(((c >> 6) & 63) | 128);
+                    utftext += String.fromCharCode((c & 63) | 128);
+                }
+
+            }
+
+            return utftext;
+        }
+    }
+//--></script>   
+<!-- End open source javascript  -->
+<!-- Start Maze javascript -->
+<script type="text/javascript">
+<!--
+//  -----------------------                                                    
+//  Maze scripts were adapted from an example here: http://www.xefer.com/2007/07/maze
+//        and from here: http://homepages.cwi.nl/~tromp/maze.html
+//  -----------------------
+(function () {
+    var rowCnt = 0;
+    var colCnt = 0;
+    var dirs = [0, 1, 2, 3]; // direction of neighbors
+    var undirs = [1, 0, 3, 2]; // opposite direction
+    var delta = { x: [0, 0, -1, 1], y: [-1, 1, 0, 0] }; // offsets of neighbors 
+
+    // A maze object, which is an 2D array of cells
+    window.maze = function (numOfRows, numOfCols) {
+        rowCnt = numOfRows;
+        colCnt = numOfCols;
+        this.isComplexity = 0;
+        this.cells = new Array();
+        this.start = { x: 0, y: 0 };
+        this.end = { x: colCnt - 1, y: rowCnt - 1 };
+        this.visitedCount = 0;
+
+        // Provides a level of indirection to the builder() method  
+        this.build = function (complexityType) {
+            this.isComplexity = complexityType;
+            rnd.seed = Math.floor(Math.random() * 1000000000);
+            return builder(this);
+        }
+
+        this.isMazeSolvable = function () {
+            /* re-seed with a random number */
+            rnd.seed = Math.floor(Math.random() * 1000000000);
+
+            /* Initialize the stack at the first element */
+            var stack = [{ x: this.start.x, y: this.start.y, neighbors: dirs.shuffle()}];
+            var bSolvable = solver(this, stack);
+
+            return bSolvable;
+        }
+
+        // Is the maze fun?
+        // The maze algorithm likes to hug the left wall and bottom wall making the maze rather easy sometimes, and thus not fun.
+        // Return false if the bottom or top row is used too much in solving.  
+        this.isMazeFun = function () {
+            var topCnt = 0;
+            var bottomCnt = 0;
+            var totalCnt = 0;
+
+            // topCnt
+            for (var c = 0; c < colCnt; c++) {
+                if (this.cells[c][0].solvePath == true) {
+                    topCnt++;
+                }
+            }
+
+            // bottomCnt
+            for (var c = 0; c < colCnt; c++) {
+                if (this.cells[c][rowCnt - 1].solvePath == true) {
+                    bottomCnt++;
+                }
+            }
+
+            // totalCnt
+            for (var c = 0; c < colCnt; c++) {
+                for (r = 0; r < rowCnt; r++) {
+                    if (this.cells[c][r].solvePath == true) {
+                        totalCnt++;
+                    }
+                }
+            }
+
+            var minSolveCnt = Math.floor(colCnt * 2 * .80);
+            var maxSolveCnt = Math.floor(colCnt * 3 * .80);
+            var maxWidth = Math.floor(colCnt / 2) + 3;
+
+            // If enough tiles are used then pass the map
+            if (totalCnt < maxSolveCnt) {
+                // if top row of maze is used by more than half then fail map
+                if (topCnt > maxWidth) {
+                    return false;  // Not a fun map
+                }
+
+                // if bottom row of the maze is used by more than half then fail map
+                if (bottomCnt > maxWidth) {
+                    return false;  // Not a fun map
+                }
+
+                // Fail if the total cells used to solve maze is less than a specified percentage off
+                if (totalCnt < minSolveCnt) {
+                    return false;  // Not a fun map
+                }
+            } else {
+                return true;
+            }
+
+            return true;
+        }
+
+
+
+        // Kicks of the initialization iteration, then continues  
+        function builder(maze) {
+            /* Builder iterator */
+            for (var c = 0; c < colCnt; c++) {
+                maze.cells[c] = new Array(colCnt);
+
+                for (r = 0; r < rowCnt; r++) {
+                    maze.cells[c][r] = new cell();
+                    maze.cells[c][r].visited = false;
+                    maze.cells[c][r].solvePath = false;
+                }
+            }
+
+            /* remove start and end walls */
+            maze.cells[maze.start.x][maze.start.y].wall[left] = false;
+            maze.cells[maze.end.x][maze.end.y].wall[below] = false;
+
+            // Long or short dead-end length
+            if (this.isComplexity == 1) {
+                // Complex: Long dead-end length
+                // A stack containing coordinates of the current cell and  a scrambled list of the direction to its neighbors.
+                var stack = [{ x: Math.floor(rnd() * colCnt), y: Math.floor(rnd() * rowCnt), neighbors: dirs.shuffle()}];
+
+                var totalCnt = ((rowCnt - 1) * (colCnt - 1) * 2);
+                for (var c = 0; c < totalCnt; c++) {
+                    dfs(maze, stack);
+                }
+            } else {
+                // Default - Short dead-end length
+                var L = new Array();
+                var R = new Array();
+
+                for (var x = 0; x < colCnt; x++) {
+                    L[x] = x;
+                    R[x] = x;
+                }
+
+                for (var row = 0; row < rowCnt - 1; row++) {
+                    eller(maze, L, R, row);
+                }
+            }
+
+
+            return true;
+        }
+
+        // Main algorithm to solve the maze
+        function solver(maze, stack) {
+            var current = stack.peek();
+
+            x = current.x;
+            y = current.y;
+            neighbors = current.neighbors;
+            var cell = maze.cells[x][y];
+
+            cell.visited = true;
+            cell.solvePath = false;
+
+            // see if we're at the exit
+            if ((x == (colCnt - 1)) && (y == (rowCnt - 1))) {
+                cell.solvePath = true;
+                return true;
+            }
+
+            var found = false;
+
+            /* look for a connected neighbor that hasn't been visited yet */
+            while (neighbors.length > 0) {
+                dir = neighbors.pop();
+
+                if (cell.wall[dir] == false) {
+                    dx = x + delta.x[dir];
+                    dy = y + delta.y[dir];
+                    if (dx >= 0 && dy >= 0 && dx < colCnt && dy < rowCnt) {
+                        if (maze.cells[dx][dy].visited == false) {
+                            stack.push({ x: dx, y: dy, neighbors: dirs.shuffle() });
+                            found = true;
+                            cell.solvePath = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (neighbors.length == 0) {
+                if (found == false) {
+                    stack.pop();
+                    if ((x == maze.start.x) && (y == maze.start.y)) {
+                        // we're back at the beginning; must not be able to compelete the maze
+                        return false;
+                    }
+                }
+            }
+
+            return solver(maze, stack);
+        }
+
+        // A cell object
+        function cell() {
+            this.token = null; // reference to the div for when we're solving
+            this.visited = false;
+            this.wall = [true, true, true, true];
+        }
+
+        /**
+        * Add a function to Array that returns a shuffled copy
+        * of the current array contents
+        */
+        Array.prototype.shuffle = function () {
+            var that = this.slice();
+            for (var j, x, i = that.length; i; j = parseInt(rnd() * i), x = that[--i], that[i] = that[j], that[j] = x);
+            return that;
+        }
+
+        /**
+        * Add a function to Array that returns that last element.
+        * equivalent to a peek operation on a stack
+        */
+        Array.prototype.peek = function () {
+            return this[this.length - 1];
+        }
+
+        // Seedable random number generator function
+        function rnd() {
+            rnd.seed = (rnd.seed * 9301 + 49297) % 233280;
+            return rnd.seed / (233280.0);
+        };
+
+
+        // Generates the maze using the Depth-First Search algorithm
+        function dfs(maze, stack) {
+            var cell = stack.peek();
+            x = cell.x;
+            y = cell.y;
+            neighbors = cell.neighbors;
+
+            // when all cells have been visited at least once, it's done
+            if (maze.cells[x][y].visited == false) {
+                maze.cells[x][y].visited = true;
+                maze.visitedCount++;
+            }
+
+            /* look for a neighbor that is in the maze and hasn't been visited yet */
+            while (neighbors.length > 0) {
+                dir = neighbors.pop();
+                if (neighbors.length == 0) {
+                    stack.pop(); // all neighbors checked, done with this one.
+                }
+
+                dx = x + delta.x[dir];
+                dy = y + delta.y[dir];
+                if (dx >= 0 && dy >= 0 && dx < colCnt && dy < rowCnt) {
+                    if (maze.cells[dx][dy].visited == false) {
+                        /* break down the wall between them. The new neighbor */
+                        /* is pushed onto the stack and becomes the new current cell */
+                        maze.cells[x][y].wall[dir] = false;
+                        maze.cells[dx][dy].wall[undirs[dir]] = false;
+                        stack.push({ x: dx, y: dy, neighbors: dirs.shuffle() });
+                        break;
+                    }
+                }
+            }
+
+            return maze.visitedCount; // when visited count == row * columns it's done
+        }
+
+
+        /**
+        * Generates the maze using an implementation of "Eller's Algorithm" 
+        * example here: http://homepages.cwi.nl/~tromp/maze.html
+        */
+        function eller(maze, L, R, y) {
+            /**
+            * Initialize the maze one row at a time
+            */
+            for (x = 0; x < colCnt; x++) {
+                if (randomBoolean() && (R[x] != (x + 1)) && (x != (colCnt - 1))) {
+                    L[R[x]] = L[x + 1];
+                    R[L[x + 1]] = R[x];
+                    R[x] = x + 1;
+                    L[x + 1] = x;
+
+                    maze.cells[x][y].wall[3] = false;
+                    maze.cells[x + 1][y].wall[2] = false;
+                }
+
+                if (randomBoolean() && R[x] != x) {
+                    L[R[x]] = L[x];
+                    R[L[x]] = R[x];
+                    L[x] = R[x] = x;
+                }
+                else {
+                    maze.cells[x][y].wall[1] = false;
+                    maze.cells[x][y + 1].wall[0] = false;
+                }
+
+                /* special treatment for last row */
+                if ((x == colCnt - 1) && (y == rowCnt - 2)) {
+                    for (var x = 0; x < colCnt - 1; x++) {
+                        if (R[x] != x + 1) {
+                            L[R[x]] = L[x + 1];
+                            R[L[x + 1]] = R[x];
+                            R[x] = x + 1;
+                            L[x + 1] = x;
+                            maze.cells[x][rowCnt - 1].wall[3] = false;
+                            maze.cells[x + 1][rowCnt - 1].wall[2] = false;
+                        }
+                    }
+                }
+            }
+
+            return y + 1;
+
+            // Slightly biased to the horizontal (i.e., returns true a bit more often than false)
+            function randomBoolean() {
+                return Math.floor(rnd() * 32) > 13;
+            }
+
+//            // Slightly biased to the horizontal (i.e., returns true a bit more often than false)
+//            function randomBoolean() {
+//                var per = getRandomInt(1, 100);
+//                var bRetVal = (per >= 34);
+//                return bRetVal;
+//            }
+
+//            function getRandomInt(min, max) {
+//                return Math.floor(Math.random() * (max - min + 1)) + min;
+//            }
+
+        }
+
+    }
+})();
+//--></script>   
+<!-- End Maze javascript  -->
+<!-- Start Main javascript -->
+<script type="text/javascript">
+<!--
+    /////////////////// 
+    // Const
+    var bDEBUG = false;         // Set to TRUE for PNG pixel info
+    var maxMapTileCnt = 3600;   // TagPro Tile limit on test server
+    var xMiddle = 24;           // Pixel mid point of PNG height.  (Hardcoded to keept the JSON files to work properly.)
+    var iMaxLevels = 10;        // Number of levels per game
+    var baseWidth = 6;          // width of bases on left side of map
+
+    // wall positions
+    var above = 0;
+    var below = 1;
+    var left = 2;
+    var right = 3;
+
+    // setting positions
+    var gameModePos = 0;
+    var mazeSizePos = 1;
+    var difficultyPos = 2;
+    var complexityPos = 3;
+    var mirrorPos = 4;
+    var speedPos = 5;
+    var wallPos = 6;
+    var bombPos = 7;
+    var powerPos = 8;
+    var boostPos = 9;
+
+    /////////////////// 
+    // Global Settings  
+    var settings = { radioButtonName: ["rbGameMode", "rbMazeSize", "rbDifficulty", "rbComplexity", "rbMirror", "rbSpeed", "rbWalls", "rbBombs", "rbPowerUps", "rbBoosts"], checkedPos: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+    var png;      // PNGlib object
+
+    var cellSize; // width of maze path
+    var totalCellSize; // width of maze path + 1 (includes the wall)
+    var rows;     // maze rows  (y)
+    var columns;  // maze cols  (x)
+    var xPixels;  // height total of PNG pixels rows    (x)
+    var yPixels;  // width  total of PNG pixels columns (y)
+    var selectedGame  = 0;  // Game selected
+    var selectedLevel = 1;  // Level# selected
+    var instanceCnt = 0;    // Maze instance Count
+
+    /////////////////// 
+
+    // OnLoad - Start
+    window.onload = function () {
+        setDownloadButtonLinks();
+        checkUrlAndRun();
+    }
+
+
+    // Update download buttons in sidebar
+    function setDownloadButtonLinks() { 
+        // Set download links (unless it's IE) 
+        var pngLink1 = document.getElementById("aPngFile");
+        var pngLink2 = document.getElementById("aPngFiles");
+        var jsonLink1 = document.getElementById("aJsonFile1");
+        var jsonLink2 = document.getElementById("aJsonFile2");
+        var bowserMsg = document.getElementById("idBowserMsg");
+
+        if (pngLink1 != null && pngLink2 != null && jsonLink1 != null && jsonLink2 != null && bowserMsg != null) 
+        {
+            var strJson, strJsonMarsball, strJsonInfo, strJsonSwitches, strJsonFields;   // JSON file parts
+
+            // Browser check
+            if (bDEBUG == false && navigator.appName == "Microsoft Internet Explorer") {
+                // Stupid IE can't handle downloading files easily so hide links
+                bowserMsg.innerHTML = "Please use Chrome browser";
+
+                pngLink1.parentNode.style.visibility = "hidden";
+                pngLink2.parentNode.style.visibility = "hidden";
+                jsonLink1.parentNode.style.visibility = "hidden";
+                jsonLink2.parentNode.style.visibility = "hidden";
+            } else {
+                // Check for Chrome Browser
+                if (!isChrome()) {
+                    // Haven't tested in other browsers so put up a warning
+                    bowserMsg.innerHTML = "WARNING: Links were only tested in Chrome browser";
+                }
+
+                // Race JSON file
+                strJsonMarsball = '"marsballs": [{ "x": 1, "y": 24}],';
+                strJsonInfo = '"info":{"name": "Race Maze","author": "kr"},';
+                strJsonSwitches = '"switches":{"4,23":{"toggle":[{ "pos": { "x": 5, "y": 25 } },{ "pos": { "x": 0, "y": 26 } },{ "pos": { "x": 2, "y": 26 } },{ "pos": { "x": 4, "y": 26 } },{ "pos": { "x": 5, "y": 26 } }]},"4,25":{"toggle":[{ "pos": { "x": 0, "y": 22 } },{ "pos": { "x": 2, "y": 22 } },{ "pos": { "x": 4, "y": 22 } },{ "pos": { "x": 5, "y": 22 } },{ "pos": { "x": 5, "y": 23 } }]}},';
+                strJsonFields = '"fields":{"5,25": { "defaultState": "red" },"0,26": { "defaultState": "on" },"2,26": { "defaultState": "on" },"4,26": { "defaultState": "red" },"5,26": { "defaultState": "red" },"0,22": { "defaultState": "on" },"2,22": { "defaultState": "on" },"4,22": { "defaultState": "blue" },"5,22": { "defaultState": "blue" },"5,23": { "defaultState": "blue" }}';
+
+                strJson = '{' + strJsonMarsball + '' + strJsonInfo + '' + strJsonSwitches + '' + strJsonFields + '}'; 
+                jsonLink1.href = "data:application/octet-stream;charset=utf-8;base64," + Base64.encode(strJson);
+                jsonLink1.download = "Race_1P_2P.json";
+             
+                // Mars ball JSON file
+                strJsonMarsball = '"marsballs": [{ "x": 3, "y": 24}],';
+                strJsonInfo = '"info":{"name": "MarsBall Maze","author": "kr"},';
+                strJsonSwitches = '"switches":{},';
+                strJsonFields = '"fields":{"4,6": { "defaultState": "blue" },"4,42": { "defaultState": "red" },"2,6": { "defaultState": "blue" },"2,42": { "defaultState": "red" },"1,12": { "defaultState": "blue" },"2,12": { "defaultState": "blue" },"3,12": { "defaultState": "blue" },"4,12": { "defaultState": "blue" },"5,12": { "defaultState": "blue" },"6,12": { "defaultState": "blue" },"1,36": { "defaultState": "red" },"2,36": { "defaultState": "red" },"3,36": { "defaultState": "red" },"4,36": { "defaultState": "red" },"5,36": { "defaultState": "red" },"6,36": { "defaultState": "red" }}';
+
+                strJson = '{' + strJsonMarsball + '' + strJsonInfo + '' + strJsonSwitches + '' + strJsonFields + '}'; 
+                jsonLink2.href = "data:application/octet-stream;charset=utf-8;base64," + Base64.encode(strJson);
+                jsonLink2.download = "MarsBall.json";
+            }
+        }
+    }
+
+    // Check if Chrome browser
+    function isChrome() {
+        var isIt = window.chrome;
+        if (isIt) {
+            // is chrome
+            return true;
+        } else {
+            // not chrome 
+            return false;
+        }
+    }
+
+    // Check to see if there is a predefined Level# in the URL
+    function checkUrlAndRun() {
+        var levelSingle = getNumberLevel("single");
+        var levelDual = getNumberLevel("dual");
+        var levelMarsBall = getNumberLevel("marsball");
+
+        var iLevelsCnt = document.getElementsByName("rbLevel").length;
+
+        // Check url for level numbers
+        if (levelSingle > 0) {
+            setRadioButtonValue("rbLevel", levelSingle - 1);
+            setGameLevelSingle(levelSingle);
+        } else if (levelDual > 0) {
+            setRadioButtonValue("rbLevel", levelDual - 1 + iMaxLevels);
+            setGameLevelRace(levelDual);
+        } else if (levelMarsBall > 0) {
+            setRadioButtonValue("rbLevel", levelMarsBall - 1 + (iMaxLevels*2));
+            setGameLevelMarsball(levelMarsBall);
+        } else {
+            // Default start
+            setRadioButtonValue("rbLevel", 0);
+            setGameLevelSingle(1);
+        }
+    }
+
+    // Gets URL parameters by name
+    function getURLParameters(paramName) {
+        paramName = paramName.toLowerCase();
+        var sURL = window.document.URL.toString();
+        if (sURL.indexOf("?") > 0) {
+            var arrParams = sURL.split("?");
+            var arrURLParams = arrParams[1].split("&");
+            var arrParamNames = new Array(arrURLParams.length);
+            var arrParamValues = new Array(arrURLParams.length);
+            var i = 0;
+            for (i = 0; i < arrURLParams.length; i++) {
+                var sParam = arrURLParams[i].split("=");
+                arrParamNames[i] = sParam[0];
+                if (sParam[1] != "")
+                    arrParamValues[i] = unescape(sParam[1]);
+                else
+                    arrParamValues[i] = "";
+            }
+
+            for (i = 0; i < arrURLParams.length; i++) {
+                if (arrParamNames[i].toLowerCase() == paramName) {
+                    return arrParamValues[i];
+                }
+            }
+            return "";
+        }
+    }
+
+    // Get Number from URL Parameters
+    function getNumberLevel(paramName) {
+        var strlevel = getURLParameters(paramName);
+
+        // Check if it's a number
+        if (strlevel && Number(strlevel)) {
+            var iLevel = Number(strlevel);
+            // Check level range
+            if (iLevel >= 1 && iLevel <= iMaxLevels) {
+                return iLevel;
+            } else {
+                return 0;
+            }
+        } else {
+            return 0;
+        }
+    }
+
+    // Set custom buttons to defaults
+    function setRadioButtonsToDefault() {
+        for (var i = 0; i < settings.radioButtonName.length; i++) {
+            var rbName = settings.radioButtonName[i];
+            if (rbName && rbName.length > 0) {
+                setRadioButtonValue(rbName, 0);
+            }
+        }
+    }
+
+    // A custom maze setting button click event
+    function CustomBtnClick() {
+        selectedGame = 0;
+        selectedLevel = 0;
+
+        // Deselect levels
+        var x = document.getElementsByName("rbLevel")
+        for (var k = 0; k < x.length; k++) {
+            if (x[k].checked) {
+                x[k].checked = false;
+            }
+        }
+        buildMap();
+    }
+
+    // Returns value of radio button
+    function getRadioButtonValue(rbName) {
+        var x = document.getElementsByName(rbName)
+        for (var k = 0; k < x.length; k++) {
+            if (x[k].checked) {
+                return x[k].value;
+            }
+        }
+    }
+
+    // Returns zero-based number of position of the checked radiobutton  
+    function getRadioButtonCheckedPos(rbName) {
+        var x = document.getElementsByName(rbName)
+        for (var k = 0; k < x.length; k++) {
+            if (x[k].checked) {
+                return k;
+            }
+        }
+    }
+
+    // Set rad
+    function setRadioButtonValue(rbName, pos) {
+        var x = document.getElementsByName(rbName)
+        if (!x[pos].checked) {
+            x[pos].checked = true;
+        }
+    }
+
+    // Downloading all level maps clicked event
+    function downloadAllLevels() {
+        var iLevelsCnt = document.getElementsByName("rbLevel").length;
+        var pngLink1 = document.getElementById("aPngFile");
+
+        // Confirm user knows what they are about to do
+        if (confirm('You are about to open ' + iLevelsCnt.toString() + ' "Save As" dialog boxes to download levels.  Please allow Chrome a few seconds to open all of them.')) {
+            //  Download all levels of each game type
+            for (var i = 1; i <= iLevelsCnt/3; i++) {
+                setGameLevelSingle(i);
+                pngLink1.click();
+                setGameLevelRace(i);
+                pngLink1.click();
+                setGameLevelMarsball(i);
+                pngLink1.click();
+            }
+        }
+
+        // Reset level settings
+        setRadioButtonValue("rbLevel", 0);
+        setGameLevelSingle(1);
+    }
+
+
+    // Downloading current map clicked event
+    function downloadingPng() {
+        // Create a new map after download
+        buildMap();
+    }
+
+
+    // Set 1-Player Race settings
+    function setGameLevelSingle(iLevel) {
+        selectedGame = 0;
+        selectedLevel = iLevel;
+        setDefaultGameLevels(iLevel);
+
+        // Set game mode: Race
+        setRadioButtonValue(settings.radioButtonName[gameModePos], 0);
+
+      
+        buildMap();
+    }
+
+    // Set 2-Player Race settings
+    function setGameLevelRace(iLevel) {
+        selectedGame = 1;
+        selectedLevel = iLevel;
+        setDefaultGameLevels(iLevel);
+
+        // Set game mode: Race
+        setRadioButtonValue(settings.radioButtonName[gameModePos], 0);
+        // Set Mirror: ON
+        setRadioButtonValue(settings.radioButtonName[mirrorPos], 1);
+
+        buildMap();
+    }
+
+    // Set MarsBall settings
+    function setGameLevelMarsball(iLevel) {
+        selectedGame = 2;
+        selectedLevel = iLevel; 
+        setDefaultGameLevels(iLevel);
+
+        // Set game mode: MarsBall
+        setRadioButtonValue(settings.radioButtonName[gameModePos], 1);
+        // Set Mirror: ON
+        setRadioButtonValue(settings.radioButtonName[mirrorPos], 1);
+
+        buildMap();
+    }
+
+
+    // Set default level settings
+    function setDefaultGameLevels(iLevel) {
+        setRadioButtonsToDefault();
+
+        if (iLevel == 1) {
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 1);
+            setRadioButtonValue(settings.radioButtonName[speedPos], 1);
+            setRadioButtonValue(settings.radioButtonName[boostPos], 4);
+        } else if (iLevel == 2) {
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 2);
+            setRadioButtonValue(settings.radioButtonName[boostPos], 5);
+        } else if (iLevel == 3) {
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[complexityPos], 1);
+            setRadioButtonValue(settings.radioButtonName[wallPos], 2);
+            setRadioButtonValue(settings.radioButtonName[powerPos], 2);
+        } else if (iLevel == 4) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 1);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 2);
+            setRadioButtonValue(settings.radioButtonName[boostPos], 2);
+            setRadioButtonValue(settings.radioButtonName[bombPos], 3);
+        } else if (iLevel == 5) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 1);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[speedPos], 2);
+        } else if (iLevel == 6) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 2);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[complexityPos], 1);
+            setRadioButtonValue(settings.radioButtonName[speedPos], 1);
+        } else if (iLevel == 7) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 2);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[complexityPos], 1);
+            setRadioButtonValue(settings.radioButtonName[bombPos], 3);
+        } else if (iLevel == 8) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 2);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[complexityPos], 1);
+            setRadioButtonValue(settings.radioButtonName[speedPos], 1);
+            setRadioButtonValue(settings.radioButtonName[bombPos], 3);
+        } else if (iLevel == 9) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 2);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[wallPos], 1);
+            setRadioButtonValue(settings.radioButtonName[powerPos], 3);
+        } else if (iLevel == 10) {
+            setRadioButtonValue(settings.radioButtonName[difficultyPos], 3);
+            setRadioButtonValue(settings.radioButtonName[mazeSizePos], 3);
+            setRadioButtonValue(settings.radioButtonName[complexityPos], 1);
+            setRadioButtonValue(settings.radioButtonName[speedPos], 1);
+        }
+    }
+     
+    // Builds
+    function buildMap() {
+        // Get Custom Maze radio button settings
+        settings.checkedPos[gameModePos] = getRadioButtonCheckedPos(settings.radioButtonName[gameModePos]);
+        settings.checkedPos[mazeSizePos] = getRadioButtonCheckedPos(settings.radioButtonName[mazeSizePos]);
+        settings.checkedPos[difficultyPos] = getRadioButtonCheckedPos(settings.radioButtonName[difficultyPos]);
+        settings.checkedPos[complexityPos] = getRadioButtonCheckedPos(settings.radioButtonName[complexityPos]);
+        settings.checkedPos[mirrorPos] = getRadioButtonCheckedPos(settings.radioButtonName[mirrorPos]);
+        settings.checkedPos[wallPos] = getRadioButtonCheckedPos(settings.radioButtonName[wallPos]);
+        settings.checkedPos[speedPos] = getRadioButtonCheckedPos(settings.radioButtonName[speedPos]);
+        settings.checkedPos[boostPos] = getRadioButtonCheckedPos(settings.radioButtonName[boostPos]);
+        settings.checkedPos[bombPos] = getRadioButtonCheckedPos(settings.radioButtonName[bombPos]);
+        settings.checkedPos[powerPos] = getRadioButtonCheckedPos(settings.radioButtonName[powerPos]);
+
+
+        // Set difficulty
+        if (settings.checkedPos[difficultyPos] == 3) {
+            cellSize = 1;
+            rows = 12;
+        } else if (settings.checkedPos[difficultyPos] == 2) {
+            cellSize = 2;
+            rows = 8;
+        } else if (settings.checkedPos[difficultyPos] == 1) {
+            cellSize = 3;
+            rows = 6;
+        } else {
+            // default
+            cellSize = 5;
+            rows = 4;
+        }
+
+        totalCellSize = cellSize + 1;  // Included wall of cell size;
+        // Set height Pixels for PNG 
+        xPixels = (rows * totalCellSize) + 1;
+        xPixels = (xPixels * 2) - 1;   // Double rows for 2nd maze
+        
+        // Size maze width    
+        var pixelsWithNoBase = maxMapTileCnt - (xPixels * (baseWidth + 1));
+        columns = Math.floor(pixelsWithNoBase / totalCellSize / xPixels);  // Calc max columns
+           
+        // Size: Small, Large, XL, XXL
+        if (settings.checkedPos[mazeSizePos] == 0) {
+            columns = Math.floor(columns * .40);  // Reduce XXL columns by 60%  -  Small
+        } else if (settings.checkedPos[mazeSizePos] == 1) {
+            columns = Math.floor(columns * .6);   // Reduce XXL columns by 40%  -  Large
+        } else if (settings.checkedPos[mazeSizePos] == 2) {
+            columns = Math.floor(columns * .80);  // Reduce XXL columns by 20%  -  XL
+        }
+
+        // Set yPixels for PNG 
+        yPixels = (columns * totalCellSize) + 1;
+        yPixels = yPixels + baseWidth;  // Add base Width to cols
+
+        var statusTextNode = document.getElementById('statusText');
+
+        // Write PNG maze
+        if (createMazePng()) {
+            var strImg64 = png.getBase64();
+            var strImg = '<img style="vertical-align:top;" id="mazekraze" alt="MazeKraze.png" title="" src="data:image/png; base64,' + strImg64 + '">';
+
+            writeToPreviewFrame(strImg);
+
+            // set preview desc and filename
+            var strStatusDesc = "";
+            var strFilename = ""; 
+
+            // Create file description
+            if (settings.checkedPos[gameModePos] == 1) {
+                strFilename = "MarsBall";
+            } else if (settings.checkedPos[mirrorPos] == 1) {
+                strFilename = "Race_1P";
+            } else {
+                strFilename = "Race_2P";
+            }
+
+            // Create status & file description text
+            if (selectedLevel == 0) {
+                for (var i = 0; i < settings.radioButtonName.length; i++) {
+                    var rbName = settings.radioButtonName[i];
+                    if (rbName && rbName.length > 0) {
+                        var strValue = getRadioButtonValue(rbName);
+
+                        if (strValue != "OFF" && strValue != "Default") {
+                            strStatusDesc = strStatusDesc + " " + strValue;
+                            strFilename = strFilename + "_" + strValue;
+                        }
+                    }
+                }
+                strStatusDesc = strStatusDesc + " Maze";
+            } else {
+                strStatusDesc = "Maze Level #" + selectedLevel.toString();
+                if (selectedLevel <= 9) {
+                    strFilename = strFilename + "_Level_" + selectedLevel.toString();
+                } else {
+                    strFilename = strFilename + "_Level" + selectedLevel.toString();
+                }
+             }
+             
+            // Update Status
+            statusTextNode.innerHTML = strStatusDesc;
+            if (bDEBUG) {
+                statusTextNode.innerHTML = statusTextNode.innerHTML + " (" + xPixels.toString() + " x " + yPixels.toString() + " = " + (xPixels * yPixels).toString() + " in " + (instanceCnt+1).toString() + " attempts)";
+            }
+
+            // Populate <a id=aPngFile> with PNG image & filename
+            var pngLink1 = document.getElementById("aPngFile");
+            pngLink1.download = strFilename;
+            pngLink1.href = "data:image/png;base64," + strImg64;
+        } else {
+            // Update Status
+            statusTextNode.innerHTML = "Error creating PNG file.";
+        } 
+             
+    }
+
+    // Write to Preview iFrame
+    function writeToPreviewFrame(src) {
+        var ifrm = document.getElementById('frmPreview');
+        ifrm = (ifrm.contentWindow) ? ifrm.contentWindow : (ifrm.contentDocument.document) ? ifrm.contentDocument.document : ifrm.contentDocument;
+
+        ifrm.document.open();
+        ifrm.document.write(src);
+        ifrm.document.close();
+
+        ifrm.document.body.style.zoom = "2";
+    }
+
+    //  Creates and builds the maze  
+    function createMazePng() {
+        var baseHeight = xMiddle - 6;
+
+        // Create PNG object
+        png = new PNGlib(yPixels, xPixels, 256); // construcor takes height, weight and color-depth
+
+        // Fill Png with grey tiles
+        var background = png.color(212, 212, 212);   // Grey floor tiles
+
+        // Draw background
+        drawBackgroundFill(baseWidth + 1, 1, yPixels - baseWidth - 3, xPixels - 3);
+
+
+        // ------------------------------
+        // Create Bases
+        // ------------------------------
+        // Top & Bottom walls of base
+        drawWallFill(0, 0, baseWidth, 1);
+        drawWallFill(0, xPixels - 1, baseWidth, 1);
+
+        // Left-side wall of base
+        drawWallFill(0, 1, 1, xPixels);
+
+        // Right-side pink/blue line
+        drawTileBlueFill(baseWidth, 1, 1, 5);
+        drawTilePinkFill(baseWidth, xPixels - 6, 1, 5);
+
+        //  base types: Single & Marsball
+        if (settings.checkedPos[gameModePos] == 1) {
+            // GameMode: Marsball
+
+            // Base wall entrance
+            drawWall(1, xMiddle - baseHeight);
+            drawWall(1, xMiddle + baseHeight);
+            drawWall(3, xMiddle - baseHeight);
+            drawWall(3, xMiddle + baseHeight);
+            drawWall(5, xMiddle - baseHeight);
+            drawWall(5, xMiddle + baseHeight);
+
+            // Base entrances
+            drawGate(2, xMiddle - baseHeight);  // "blue" gate
+            drawGate(4, xMiddle - baseHeight);  // "blue" gate
+            drawGate(2, xMiddle + baseHeight);  // "red" gate
+            drawGate(4, xMiddle + baseHeight);  // "red" gate
+
+            // Blue & pink tiles
+            for (var xx = 1; xx <= 5; xx++) {
+                for (var yy = 1; yy < baseWidth; yy++) {
+                    drawTileBlue(yy, xMiddle - baseHeight + xx);
+                    drawTilePink(yy, xMiddle + baseHeight - xx);
+                }
+            }
+
+            // Draw arrows
+            drawTileBlueFill(3, xMiddle - 10, 1, 6);
+            drawTileBlue(2, xMiddle - 9);
+            drawTileBlue(1, xMiddle - 8);
+            drawTileBlue(4, xMiddle - 9);
+            drawTileBlue(5, xMiddle - 8);
+
+
+            drawTilePinkFill(3, xMiddle + 5, 1, 6);
+            drawTilePink(2, xMiddle + 9);
+            drawTilePink(1, xMiddle + 8);
+            drawTilePink(4, xMiddle + 9);
+            drawTilePink(5, xMiddle + 8);
+
+            // Rear gate
+            drawGateFill(1, xMiddle - baseHeight + 6, baseWidth, 1);   // "blue" gate
+            drawGateFill(1, xMiddle + baseHeight - 6, baseWidth, 1);   // "red" gate
+
+            // Flags 
+            drawRedFlag(1, xMiddle - baseHeight + 1);
+            drawBlueFlag(1, xMiddle + baseHeight - 1);
+
+        } else {
+            // Race base
+
+            // Black space for Mars ball
+            drawTileBlackFill(0, xMiddle - 1, 3, 3);
+
+            // Marsball box
+            drawWallFill(0, xMiddle - 3, 3, 1);
+            drawWallFill(0, xMiddle + 3, 3, 1);
+            drawWallFill(3, xMiddle - 3, 1, 7);
+            drawWallFill(4, xMiddle, 3, 1);
+
+            // Pink/Lite-blue base colors
+            var hPinkblue = 18;
+            drawTilePinkFill(1, xMiddle - hPinkblue, baseWidth - 3, hPinkblue-4);
+            drawTileBlueFill(1, xMiddle + 5, baseWidth - 3, hPinkblue - 4);
+            drawTileBlueFill(baseWidth - 2, xMiddle - hPinkblue, baseWidth - 3, hPinkblue - 4);
+            drawTilePinkFill(baseWidth - 2, xMiddle + 5, baseWidth - 3, hPinkblue - 4);
+
+            // Gates & switches
+            drawSwitch(baseWidth - 2, xMiddle - 1);
+            drawSwitch(baseWidth - 2, xMiddle + 1);
+            drawGate(baseWidth - 1, xMiddle - 1);
+            drawGate(baseWidth - 1, xMiddle + 1);
+            drawGateFill(baseWidth - 2, xMiddle - 2, 2, 1);
+            drawGateFill(baseWidth - 2, xMiddle + 2, 2, 1);
+            drawTileBlueFill(baseWidth - 2, xMiddle - 3, 2, 1);
+            drawTilePinkFill(baseWidth - 2, xMiddle + 3, 2, 1);
+
+            // Base Bombs 
+            drawBomb(0, xMiddle - 2);
+            drawBomb(0, xMiddle + 2);
+            drawBomb(2, xMiddle - 2);
+            drawBomb(2, xMiddle + 2);
+
+            // Flags 
+            drawRedFlag(1, xMiddle - 2);
+            drawBlueFlag(1, xMiddle + 2);
+        }
+
+
+        // Draw Mazes
+        if (settings.checkedPos[mirrorPos] == 0) {
+            //  Create maze objects 
+            var objMaze1 = getBestMaze(settings.checkedPos[complexityPos]);
+            var objMaze2 = getBestMaze(settings.checkedPos[complexityPos]);
+            if (objMaze1 && objMaze2) {
+                for (var row = 0; row < rows; row++) {
+                    for (var col = 0; col < columns; col++) {
+                        // Top maze
+                        drawCell(objMaze1.cells[col][row].wall, col, row, false, objMaze1.cells[col][row].solvePath);
+                        // Bot. 2nd maze
+                        drawCell(objMaze2.cells[col][row].wall, col, row, true, objMaze2.cells[col][row].solvePath);
+                    }
+                }
+            }
+        } else {
+            //  Create maze object 
+            var objMaze1 = getBestMaze(settings.checkedPos[complexityPos]);
+
+            if (objMaze1) {
+                for (var row = 0; row < rows; row++) {
+                    for (var col = 0; col < columns; col++) {
+                        // Top maze
+                        drawCell(objMaze1.cells[col][row].wall, col, row, false, objMaze1.cells[col][row].solvePath);
+                        // Bot. Mirror maze
+                        drawCell(objMaze1.cells[col][row].wall, col, row, true, objMaze1.cells[col][row].solvePath);
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // Gets a solvable maze
+    function getSolvableMaze(iComplexity) {
+        //  Create maze object 
+        var objMaze = new maze(rows, columns);
+        if (!objMaze.build(iComplexity)) {
+            return null;  // Error
+        } else if (!objMaze.isMazeSolvable()) {
+            return null;  // Error
+        }
+        return objMaze;
+    }
+
+    // Gets maze that is fun 
+    function getFunSolvableMaze(iComplexity) {
+        //  Create maze object 
+        var objMaze = getSolvableMaze(iComplexity);
+        if (!objMaze.isMazeFun()) {
+            return null;  // Error
+        }
+        return objMaze;
+    }
+
+    // Tries to get the most fun map or at least a solvable map
+    function getBestMaze(iComplexity) {
+        instanceCnt = 0;
+
+        // Solve maze and create a new one if it fails 
+        var objMaze = getFunSolvableMaze(iComplexity);
+        while (objMaze == null) {
+            instanceCnt++;
+            if (instanceCnt > 10) {
+                return null;  // Error
+            } else if (instanceCnt >= 8) {
+                objMaze = getSolvableMaze(iComplexity);
+            } else {
+                objMaze = getFunSolvableMaze(iComplexity);
+            }
+        }
+
+        return objMaze;
+    }
+
+    // Fills PNG background with Pink, Lite-Blue, and grey floor tiles depending on speed setting.
+    function drawBackgroundFill(y, x, w, h) {
+        for (var xx = x; xx <= h + x; xx++) {
+            for (var yy = y; yy <= w + y; yy++) {
+                if (settings.checkedPos[speedPos] == 2) {
+                    // Checkerboard - Fast speed
+                    if ((isEven(xx) && isOdd(yy)) || (isEven(yy) && isOdd(xx))) {
+                        drawTilePink(yy, xx);
+                    } else {
+                        drawTileBlue(yy, xx);
+                    }
+                } else if (settings.checkedPos[speedPos] == 1) {
+                    // Split colors - Half speed
+                    if (xx > xMiddle) {
+                        drawTilePink(yy, xx);
+                    } else if (xx < xMiddle) {
+                        drawTileBlue(yy, xx);
+                    } else {
+                        // Middle
+                        drawTileGrey(yy, xx);
+                    }
+                } else {
+                    // Default speed:  Write over any possible spawn points in the maze since were using normal tiles.  (5 tiles from flag)
+                    if (settings.checkedPos[gameModePos] == 0 && yy == baseWidth + 1 && (xx >= (xMiddle - 8) && xx <= (xMiddle + 8))) {
+                        if (xx >= xMiddle) {
+                            drawTileBlue(yy, xx);
+                        }
+                        else {
+                            drawTilePink(yy, xx);
+                        }
+                    } else {
+                        drawTileGrey(yy, xx);
+                    }
+                }
+            }
+        }
+    }
+
+
+    // Is number Odd?
+    function isOdd(n) {
+        return n & 1;
+    }
+
+    // Is number Even?
+    function isEven(n) {
+        return !(n & 1);
+    }
+
+    // Draw an individual maze cell
+    function drawCell(wall, y, x, bMirror, bSolvePath) {
+        var yStart = (y * totalCellSize) + baseWidth;
+        var xStart = x * totalCellSize;
+        var xMirrorStart = (((rows * 2) - x) * totalCellSize) - totalCellSize;
+
+        if (wall[right] && wall[above] && wall[left] && wall[below]) {
+            // All 4 walls are set so fill solid walls - Default, spikes, bombs
+            if (settings.checkedPos[wallPos] == 2) {
+                // Bombs
+                if (bMirror) {
+                    drawBombFill(yStart, xMirrorStart, totalCellSize, totalCellSize);  //Mirror
+                } else {
+                    drawBombFill(yStart, xStart, totalCellSize, totalCellSize);
+                }
+            } else if (settings.checkedPos[wallPos] == 1) {
+                // Spikes
+                if (bMirror) {
+                    drawSpikeFill(yStart, xMirrorStart, totalCellSize, totalCellSize);  //Mirror
+                } else {
+                    drawSpikeFill(yStart, xStart, totalCellSize, totalCellSize);
+                }
+            } else {
+                // Default
+                if (bMirror) {
+                    drawWallFill(yStart, xMirrorStart, totalCellSize, totalCellSize);  //Mirror
+                } else {
+                    drawWallFill(yStart, xStart, totalCellSize, totalCellSize);
+                }
+            }
+        } else {
+
+            // Add Boosts
+            if (settings.checkedPos[boostPos] != 0) {
+                var yCenter = yStart + Math.floor(totalCellSize / 2);
+                var xCenter = xStart + Math.floor(totalCellSize / 2);
+                var xMirrorCenter = xMirrorStart + Math.floor(cellSize / 2) + 1;
+
+                // Check if solve path is on
+                if (settings.checkedPos[boostPos] == 5) {
+                    if (bSolvePath) {
+                        if (bMirror) {
+                            drawBoostFill(yStart + 1, xMirrorStart + 1, cellSize, cellSize);  //Mirror
+                        } else {
+                            drawBoostFill(yStart + 1, xStart + 1, cellSize, cellSize);
+                        }
+                    }
+                } else if (settings.checkedPos[boostPos] == 4) {
+                    if (bSolvePath) {
+                        if (bMirror) {
+                            drawBoost(yStart + Math.floor(totalCellSize / 2), xMirrorStart + Math.floor(totalCellSize / 2));  //Mirror
+                        } else {
+                            drawBoost(yStart + Math.floor(totalCellSize / 2), xStart + Math.floor(totalCellSize / 2));
+                        }
+                    }
+                } else {
+                    // Normal boost settings
+                    if (settings.checkedPos[boostPos] >= 1 && !wall[right] && !wall[left] && wall[above] && wall[below]) {
+                        // Right-left hall - bottom
+                        if (bMirror) {
+                            drawBoost(yCenter - 1, xMirrorCenter);   //Mirror
+                        } else {
+                            drawBoost(yCenter + 1, xCenter);
+                        }
+                    }
+                    if (settings.checkedPos[boostPos] >= 2 && wall[right] && wall[left] && !wall[above] && !wall[below]) {
+                        // Up-Down hall - top
+                        if (bMirror) {
+                            drawBoost(yCenter, xMirrorCenter + 1);   //Mirror
+                        } else {
+                            drawBoost(yCenter, xCenter - 1);
+                        }
+                    }
+                    if (settings.checkedPos[boostPos] >= 3 && !wall[right] && !wall[left] && wall[above] && wall[below]) {
+                        // Right-left hall - top
+                        if (bMirror) {
+                            drawBoost(yCenter, xMirrorCenter);   //Mirror
+                        } else {
+                            drawBoost(yCenter, xCenter);
+                        }
+                    }
+                    if (settings.checkedPos[boostPos] >= 3 && wall[right] && wall[left] && !wall[above] && !wall[below]) {
+                        // Up-Down hall - bottom
+                        if (bMirror) {
+                            drawBoost(yCenter, xMirrorCenter);   //Mirror
+                        } else {
+                            drawBoost(yCenter, xCenter);
+                        }
+                    }
+                }
+            }
+
+
+            // Add bombs 
+            // Only add bombs if not in the first few colums so that the mars ball won't be moved from bombs
+            if (settings.checkedPos[bombPos] != 0 && y >= 1) {
+                if (settings.checkedPos[bombPos] >= 1 && wall[right] && !wall[above] && !wall[left] && wall[below]) {
+                    // Bottom-right corner
+                    if (bMirror) {
+                        drawBomb(yStart + cellSize, xMirrorStart + 1);   //Mirror
+                    } else {
+                        drawBomb(yStart + cellSize, xStart + cellSize);
+                    }
+                }
+                if (settings.checkedPos[bombPos] >= 2 && !wall[right] && wall[above] && wall[left] && !wall[below]) {
+                    // Top-Left corner
+                    if (bMirror) {
+                        drawBomb(yStart + 1, xMirrorStart + cellSize);   //Mirror
+                    } else {
+                        drawBomb(yStart + 1, xStart + 1);
+                    }
+                }
+                if (settings.checkedPos[bombPos] >= 3 && !wall[right] && !wall[above] && wall[left] && wall[below]) {
+                    // Bottom-Left corner
+                    if (bMirror) {
+                        drawBomb(yStart + 1, xMirrorStart + 1);   //Mirror
+                    } else {
+                        drawBomb(yStart + 1, xStart + cellSize);
+                    }
+                }
+                if (settings.checkedPos[bombPos] >= 3 && wall[right] && wall[above] && !wall[left] && !wall[below]) {
+                    // Top-right corner
+                    if (bMirror) {
+                        drawBomb(yStart + cellSize, xMirrorStart + cellSize);   //Mirror
+                    } else {
+                        drawBomb(yStart + cellSize, xStart + 1);
+                    }
+                }
+            }
+
+            // Add power-ups
+            if (settings.checkedPos[powerPos] != 0) {
+                if (settings.checkedPos[powerPos] >= 1 && wall[above] && wall[below] && wall[left]) {
+                    //  C
+                    if (bMirror) {
+                        drawPowerUp(yStart + 1, xMirrorStart + Math.floor(totalCellSize / 2));   //Mirror
+                    } else {
+                        drawPowerUp(yStart + 1, xStart + Math.floor(totalCellSize / 2));
+                    }
+                }
+                if (settings.checkedPos[powerPos] >= 2 && wall[above] && wall[below] && wall[right]) {
+                    //  Reverse C
+                    if (bMirror) {
+                        drawPowerUp(yStart + cellSize, xMirrorStart + Math.floor(totalCellSize / 2));  //Mirror
+                    } else {
+                        drawPowerUp(yStart + cellSize, xStart + Math.floor(totalCellSize / 2));
+                    }
+                }
+                if (settings.checkedPos[powerPos] >= 3 && wall[left] && wall[right] && wall[below]) {
+                    //  U
+                    if (bMirror) {
+                        drawPowerUp(yStart + Math.floor(totalCellSize / 2), xMirrorStart + 1);   //Mirror
+                    } else {
+                        drawPowerUp(yStart + Math.floor(totalCellSize / 2), xStart + cellSize);
+                    }
+                }
+                if (settings.checkedPos[powerPos] >= 3 && wall[left] && wall[right] && wall[above]) {
+                    //  Upside-down U
+                    if (bMirror) {
+                        drawPowerUp(yStart + Math.floor(totalCellSize / 2), xMirrorStart + cellSize);   //Mirror
+                    } else {
+                        drawPowerUp(yStart + Math.floor(totalCellSize / 2), xStart + 1);
+                    }
+                }
+            }
+        }
+
+        // left border
+        if (wall[left] && y == 0) {
+            // DarkGray: Wall
+            if (bMirror) {
+                drawWallFill(0 + baseWidth, xMirrorStart + 1, 1, totalCellSize);  //Mirror
+            } else {
+                drawWallFill(0 + baseWidth, xStart, 1, totalCellSize);
+            }
+        }
+
+        // above border
+        if (wall[above] && x == 0) {
+            // DarkGray: Wall
+            if (bMirror) {
+                drawWallFill(yStart, xMirrorStart + totalCellSize, totalCellSize, 1);  //Mirror
+            } else {
+                drawWallFill(yStart, 0, totalCellSize, 1);
+            }
+        }
+
+        // right walls      
+        if (wall[right]) {
+            if (settings.checkedPos[wallPos] == 2 && y != columns - 1) {
+                // Orange: Bomb - walls
+                if (bMirror) {
+                    drawBombFill(yStart + totalCellSize, xMirrorStart, 1, totalCellSize + 1);  //Mirror
+                } else {
+                    drawBombFill(yStart + totalCellSize, xStart, 1, totalCellSize + 1);
+                }
+            } else if (settings.checkedPos[wallPos] == 1 && y != columns - 1) {
+                // DarkDarkGray: Spike - walls
+                if (bMirror) {
+                    drawSpikeFill(yStart + totalCellSize, xMirrorStart, 1, totalCellSize + 1);  //Mirror
+                } else {
+                    drawSpikeFill(yStart + totalCellSize, xStart, 1, totalCellSize + 1);
+                }
+            } else {
+                // DarkGray: Wall
+                if (bMirror) {
+                    drawWallFill(yStart + totalCellSize, xMirrorStart, 1, totalCellSize + 1);  //Mirror
+                } else {
+                    drawWallFill(yStart + totalCellSize, xStart, 1, totalCellSize + 1);
+                }
+            }
+        }
+
+        // below walls
+        if (wall[below]) {
+            if (settings.checkedPos[wallPos] == 2 && x != rows - 1) {
+                // Orange: Bomb
+                if (bMirror) {
+                    drawBombFill(yStart, xMirrorStart, totalCellSize + 1, 1);  //Mirror
+                } else {
+                    drawBombFill(yStart, xStart + totalCellSize, totalCellSize + 1, 1);
+                }
+            } else if (settings.checkedPos[wallPos] == 1 && x != rows - 1) {
+                // DarkDarkGray: Spikes
+                if (bMirror) {
+                    drawSpikeFill(yStart, xMirrorStart, totalCellSize + 1, 1);  //Mirror
+                } else {
+                    drawSpikeFill(yStart, xStart + totalCellSize, totalCellSize + 1, 1);
+                }
+            } else {
+                // DarkGray: Wall
+                if (bMirror) {
+                    drawWallFill(yStart, xMirrorStart, totalCellSize + 1, 1);  //Mirror
+                } else {
+                    drawWallFill(yStart, xStart + totalCellSize, totalCellSize + 1, 1);
+                }
+            }
+        }
+
+    }
+
+
+    /*
+    //  Draw by Tagpro colors
+    */
+    // Draw: Red Flag
+    function drawRedFlag(y, x) {
+        png.buffer[png.index(y, x)] = png.color(255, 0, 0);
+    }
+
+    // Draw: Blue Flag
+    function drawBlueFlag(y, x) {
+        png.buffer[png.index(y, x)] = png.color(0, 0, 255);
+    }
+
+    // Draw: Yellow Boost  
+    function drawBoost(y, x) {
+        png.buffer[png.index(y, x)] = png.color(255, 255, 0);
+    }
+    function drawBoostFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(255, 255, 0);
+            }
+        }
+    }
+
+
+    // Draw: Lite-green Power Up
+    function drawPowerUp(y, x) {
+        png.buffer[png.index(y, x)] = png.color(0, 255, 0);
+    }
+
+    // Draw: Brown button switch
+    function drawSwitch(y, x) {
+        png.buffer[png.index(y, x)] = png.color(185, 122, 87);
+    }
+
+    // Draw: DarkGreen Gate
+    function drawGate(y, x) {
+        drawGateFill(y, x, 1, 1);
+    }
+    function drawGateFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(0, 117, 0);
+            }
+        }
+    }
+
+    // Draw: Black Empty Tile
+    function drawTileBlack(y, x) {
+        drawTileBlackFill(y, x, 1, 1);
+    }
+    function drawTileBlackFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(0, 0, 0);
+            }
+        }
+    }
+
+    // Draw: Gray Normal Tile
+    function drawTileGrey(y, x) {
+        drawTileGreyFill(y, x, 1, 1);
+    }
+    function drawTileGreyFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(212, 212, 212);
+            }
+        }
+    }
+
+    // Draw: DarkGray Wall
+    function drawWall(y, x) {
+        drawWallFill(y, x, 1, 1);
+    }
+    function drawWallFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(120, 120, 120);
+            }
+        }
+    }
+
+    // Draw: DarkDarkGray Spike
+    function drawSpike(y, x) {
+        drawSpikeFill(y, x, 1, 1);
+    }
+    function drawSpikeFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(55, 55, 55);
+            }
+        }
+    }
+
+    // Draw: Lite-blue Tile  
+    function drawTileBlue(y, x) {
+        drawTileBlueFill(y, x, 1, 1);
+    }
+    function drawTileBlueFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(187, 184, 221);
+            }
+        }
+    }
+
+    // Draw: Pink Tile 
+    function drawTilePink(y, x) {
+        drawTilePinkFill(y, x, 1, 1);
+    }
+    function drawTilePinkFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(220, 186, 186);
+            }
+        }
+    }
+
+    // Draw: Orange Bomb
+    function drawBomb(y, x) {
+        drawBombFill(y, x, 1, 1);
+    }
+    function drawBombFill(y, x, w, h) {
+        for (var c = 0; c < w; c++) {
+            for (var r = 0; r < h; r++) {
+                png.buffer[png.index(y + c, x + r)] = png.color(255, 128, 0);
+            }
+        }
+    }
+ 
+//--></script>   
+<!-- End Main javascript  -->
+<!-- Start Main css  -->
+<style type="text/css"> 
+html, body
+{
+    height: 100%;
+}
+
+#body1  {
+    margin: 0;
+    padding: 0px;
+    width: 100%;
+    height: 100%;
+    min-width: 100%; 
+    min-height: 100%;
+    background-image: linear-gradient(bottom, rgb(25,0,214) 10%, rgb(0,0,0) 25%, rgb(0,0,0) 80%, rgb(224,3,14) 100%);
+    background-image: -o-linear-gradient(bottom, rgb(25,0,214) 10%, rgb(0,0,0) 25%, rgb(0,0,0) 80%, rgb(224,3,14) 100%);
+    background-image: -moz-linear-gradient(bottom, rgb(25,0,214) 10%, rgb(0,0,0) 25%, rgb(0,0,0) 80%, rgb(224,3,14) 100%);
+    background-image: -webkit-linear-gradient(bottom, rgb(25,0,214) 10%, rgb(0,0,0) 25%, rgb(0,0,0) 80%, rgb(224,3,14) 100%);
+    background-image: -ms-linear-gradient(bottom, rgb(25,0,214) 10%, rgb(0,0,0) 25%, rgb(0,0,0) 80%, rgb(224,3,14) 100%);
+    background-image: -webkit-gradient(linear,left bottom, left top, color-stop(0.1, rgb(25,0,214)), color-stop(0.25, rgb(0,0,0)), color-stop(0.8, rgb(0,0,0)), color-stop(1, rgb(224,3,14)));
+    
+    /*  Turn off text selection  */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+       
+/*  Title - Header Text     */
+.threeDText 
+{
+    font-family: helvetica, sans-serif;
+    text-shadow: 1px 0px 0px #FFF,	/* right edge highlight */
+        -1px 0px #EEE,	            /* left edge highlight */
+        0px -1px 0px #FFF,	        /* front top edge highlight */
+        0px 1px #EEE,	            /* front bottom edge highlight */
+        -1px 2px 1px #888,	        /* bottom-left side dark shadow */
+        -1px 0px 1px #888,	        /* left side dark shadow */
+        0px 1px 2px #AAA,	        /* bottom side medium shadow */
+        -2px 3px 2px #AAA,	        /* bottom-left side medium shadow */
+        -2px 0px 2px #AAA, 	        /* left side medium shadow */
+        -3px 3px 0px #BBB,	        /* back bottom-left contrast */
+        -3px 0px 0px #BBB,	        /* back left contrast line */
+        -5px 5px 7px rgba(0, 0, 0, 0.65),	/* dark soft cast shadow */
+        0px 0px 10px rgba(0, 0, 0, 0.15);	/* ambient shadow */
+    font-size: 85PX;
+    line-height: 85px;
+    color: #F3F3F3;
+}
+
+/*  Title - SubHeader Text     */
+.subText
+{
+    font-family: helvetica, sans-serif;
+    font-size: 25px;
+    font-weight: bold;
+    color: #d4d4d4; 
+    text-align: center; 
+    vertical-align: top;
+    text-shadow: -1px 0px 0px #000, 
+        -2px 1px 0px #000;	 
+}
+
+/*  Title - Credit Text     */
+.creditText
+{
+    font-family: helvetica, sans-serif;
+    font-size: 12px;
+    color: #d4d4d4;   
+    text-shadow: -1px 0px 0px #000, 
+        -2px 1px 0px #000;	 
+}
+
+/*  Menu - Header Text     */
+.menuHeaderText
+{
+    font-family: helvetica, sans-serif;
+    font-size: 30px;
+    font-weight: bold;
+    color: #FFFDF1;
+    background: #A3A2C0;
+    text-shadow:  -1px 2px 0px #4C4A73;
+    
+    border: 2px groove #A3A2C0; 
+    border-left: 0px; 
+    border-right: 0px; 
+    padding:4px;
+}
+
+/*  Menu Text     */
+.menuText
+{
+    font-family: helvetica, sans-serif;
+    font-size: 18px;
+    color: #4C4A73;
+}
+
+/*  Menu Sub-Text     */
+.menuSubText
+{
+    font-family: helvetica, sans-serif;
+    font-size: 14px;
+    color: #4C4A73;
+    vertical-align:top;
+}
+
+ 
+/*  buttonGrey        */
+.buttonGrey 
+{         
+	background: #ededed;
+	background: -moz-linear-gradient(top, #ededed 0%, #cccccc 100%);
+	background: -webkit-linear-gradient(top, #ededed 0%,#cccccc 100%);
+	border: 1px solid #aaa;
+	font-family: helvetica, sans-serif;
+	font-size: 0.8em;
+	font-weight: bold;
+	text-decoration: none;
+	text-align: center;
+	color: #333;
+	padding: 5px;
+	border-radius: 15px;
+	display: block;
+	margin: 0 auto;
+	width: 150px;
+	-webkit-box-shadow: 0 3px 4px rgba(0,0,0,0.3), inset 0 1px 10px #fff;
+	-moz-box-shadow:    0 3px 4px rgba(0,0,0,0.3), inset 0 1px 10px #fff;
+}
+		
+/*  buttonGrey - selected       */
+.buttonGrey:active {
+	background: -moz-linear-gradient(top, #bbbbbb 0%, #eeeeee 100%);
+	background: -webkit-linear-gradient(top, #bbbbbb 0%, #eeeeee 100%);
+	position: relative;
+	top: 2px;
+	-webkit-box-shadow: 0 0px 0px rgba(0,0,0,0.3), inset 0 1px 2px rgba(0,0,0,0.1);
+	-moz-box-shadow:    0 0px 0px rgba(0,0,0,0.3), inset 0 1px 2px rgba(0,0,0,0.1);
+	-webkit-transition: 0.1s;
+}
+ 
+/*  radiobuttons       */
+.radiobuttons input[type="radio"]
+{ 
+    -webkit-appearance:none;
+    visibility:hidden;
+    display:none;
+}
+
+ /* radiobuttons - label   */
+.radiobuttons input[type="radio"]+label  
+{
+    background-color : #C0BBA2; 
+    color: #444;
+    float:left;
+    text-align: center;
+    height:16px;
+    
+    display:block;
+
+    font-size: 100%;
+    font-family: helvetica, sans-serif;
+    font-weight:bold;
+
+
+    border-top:  1px solid #bbb; 
+    border-right:  1px solid black; 
+    border-bottom:  2px solid #222; 
+    border-left:  1px solid #bbb; 
+
+    text-shadow: 1px 1px #DDD;
+
+    -moz-box-shadow:    3px 4px 5px #777;
+    -webkit-box-shadow: 3px 4px 5px #777;
+    box-shadow:         3px 4px 5px #777;
+
+    padding:  7px 8px 8px 13px;  /* Tp Rt Bt Lt */
+    margin: 0px 0px 0px 0px;   /* Tp Rt Bt Lt */
+}
+
+ /* radiobuttons - label:checked */
+.radiobuttons input[type="radio"]:checked+label,  .radiobuttons input[type="radio"]:checked+label:hover  
+{
+    background-color : #736F56;
+    color:             #fff476; 
+    cursor:  default;
+
+    border-top:  1px solid black; 
+    border-right:  1px solid black; 
+    border-bottom:  0px solid #eee; 
+    border-left:  1px solid black;  
+
+    text-shadow: 1px 1px #555;
+
+    -moz-box-shadow:    inset 4px 3px 3px #777;
+    -webkit-box-shadow: inset 4px 3px 3px #777;
+    box-shadow:         inset 4px 3px 3px #777;
+     
+    padding:  9px 5px 5px 16px;  /* Tp Rt Bt Lt */
+    margin:   3px 0px 0px 0px;  /* Tp Rt Bt Lt */
+
+} 
+
+/* radiobuttons  label:disabled  */
+.radiobuttons input[disabled]+label, .radiobuttons input[disabled]+label:hover, .radiobuttons input+label.disabled, .radiobuttons input+label.disabled:hover 
+{ 
+    opacity: 			.7;
+    cursor: 			default;
+    color: 				rgba(0,0,0,.4) !important;
+    background-color: 	rgba(0,0,0,0.05);
+    text-shadow: 		none !important;
+    background-image: 	none;
+
+    -webkit-box-shadow: rgba(0,0,0,0.0) 0 .0em 0px; /* drop shadow */
+    -moz-box-shadow: 	rgba(0,0,0,0.0) 0 .0em 0px; /* drop shadow */
+    box-shadow: 	    rgba(0,0,0,0.0) 0 .0em 0px; /* drop shadow */
+
+    border-top:    1px solid #ccc; 
+    border-right:  1px solid #bbb; 
+    border-bottom: 1px solid #bbb; 
+    border-left:   1px solid #ccc; 
+
+    padding:  5px 8px 8px 13px;  /* Tp Rt Bt Lt */
+    margin:   3px 0px 0px 0px;   /* Tp Rt Bt Lt */
+}
+ 
+/* radiobuttons - label:hover - pointer */
+.radiobuttons input[type="radio"]+label:hover
+{
+    cursor: pointer;
+    background-color : #cfcab1; 
+}
+
+/* Set width for single character radio buttons  */
+.singlechar input[type="radio"]+label  
+{ 
+    width: 16px;
+}
+
+
+/* tabs    */
+.tabs 
+{
+    position: relative;   
+    min-height: 520px;  /*  Must keep hardcoded height for tabs */
+    clear: both;
+    margin: 19px 0px 5px 0px;
+}
+
+.tab {
+    float: left;   
+}
+
+/* tabs: label  */
+.tab label.curvedTab {
+    background: #C0BBA2; 
+    color: #141858;
+    border: 1px solid #ccc; 
+    padding-left: 10px; 
+    padding-right: 10px; 
+    padding-bottom: 4px; 
+    padding-top: 5px; 
+    margin-left: -3px; 
+    left: 1px; 
+    top: 0px; 
+    position: relative;
+    border-top-left-radius:5px;
+    border-top-right-radius:5px;
+    vertical-align: text-bottom;
+    font-family: helvetica, sans-serif;
+    font-size:18px;
+    cursor: pointer;
+    -webkit-box-shadow: inset 2px 2px 5px rgba(0,0,0,0.1);
+	-moz-box-shadow:    inset 2px 2px 5px rgba(0,0,0,0.1);
+}
+
+/* tabs: Hide real radio buttons*/
+.tab [type=radio] {
+    display: none;   
+}
+
+/* tabs: label:checked */
+.tab [type=radio]:checked ~ label.curvedTab {
+    background: #FFFDF1;
+    padding: 10px; 
+    z-index: 1;
+    padding-top: 8px; 
+    color: #040485; 
+    border-top-left-radius:6px;
+    border-top-right-radius:6px;
+    font-weight:  bold;
+    top: -4px; 
+    
+    -webkit-box-shadow: 2px 0px 4px rgba(50, 50, 50, 0.75), -2px 0px 4px rgba(50, 50, 50, 0.75);
+    -moz-box-shadow:    2px 0px 4px rgba(50, 50, 50, 0.75), -2px 0px 4px rgba(50, 50, 50, 0.75);
+    box-shadow:         2px 0px 4px rgba(50, 50, 50, 0.75), -2px 0px 4px rgba(50, 50, 50, 0.75);
+    
+}
+   
+/* tabs - label:hover */
+.tab [type="radio"]+label:hover
+{
+    background-color : #cfcab1; 
+}
+/* tabs - label:hover */
+.tab [type="radio"]:checked+label:hover
+{
+    cursor: default;
+}
+
+/* tabs: label:checked - container  */
+.tab [type=radio]:checked ~ label.curvedTab ~ .containerTab {
+    z-index: 2;
+}
+
+/* tabs: container  */
+.containerTab {
+    position: absolute;
+    top: 24px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+   
+    background-color:#FFFDF1; 
+    border-right: 3px ridge #C0BBA2; 
+    border-bottom: 4px ridge #C0BBA2; 
+    border-left: 2px groove #C0BBA2; 
+    border-radius: 3px;
+
+    text-align:center; 
+    margin: 0px;  
+}
+
+/*  Sidebar container       */
+.containerSidebar
+{
+    background-color:#FFFDF1; 
+    border-right: 3px ridge #C0BBA2; 
+    border-bottom: 4px ridge #C0BBA2; 
+    border-left: 2px groove #C0BBA2; 
+    border-radius: 3px;
+    text-align: center; 
+    margin: 0px;  
+}
+
+</style>
+<!-- End Main css  -->
+</head>
+<body id="body1" bgcolor="black" >
+    <form id="mazeform" action="javascript:"  >
+        <table  style="width:100%;height:100%;" border="0"  cellpadding="0" cellspacing="0" align="center"  >
+        <tbody>
+            <tr>
+                <td colspan="3" align="center" style="width:100%;" >
+                    <span class="threeDText" style="text-align:center;" >Maze Kraze</span>
+                    <span class="creditText" style="text-align:right;"  >by kr</span>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="3" align="center" style="width:100%; " >
+                    <span class="subText" >A</span> 
+                    <a  style="padding-left:5px;padding-right:5px;" href="http://koalabeast.com/" target="_blank"><img  alt="" width="200px"  border="0" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAfCAYAAACiY4IJAAAACXBIWXMAAAsTAAALEwEAmpwYAAAKT2lDQ1BQaG90b3Nob3AgSUNDIHByb2ZpbGUAAHjanVNnVFPpFj333vRCS4iAlEtvUhUIIFJCi4AUkSYqIQkQSoghodkVUcERRUUEG8igiAOOjoCMFVEsDIoK2AfkIaKOg6OIisr74Xuja9a89+bN/rXXPues852zzwfACAyWSDNRNYAMqUIeEeCDx8TG4eQuQIEKJHAAEAizZCFz/SMBAPh+PDwrIsAHvgABeNMLCADATZvAMByH/w/qQplcAYCEAcB0kThLCIAUAEB6jkKmAEBGAYCdmCZTAKAEAGDLY2LjAFAtAGAnf+bTAICd+Jl7AQBblCEVAaCRACATZYhEAGg7AKzPVopFAFgwABRmS8Q5ANgtADBJV2ZIALC3AMDOEAuyAAgMADBRiIUpAAR7AGDIIyN4AISZABRG8lc88SuuEOcqAAB4mbI8uSQ5RYFbCC1xB1dXLh4ozkkXKxQ2YQJhmkAuwnmZGTKBNA/g88wAAKCRFRHgg/P9eM4Ors7ONo62Dl8t6r8G/yJiYuP+5c+rcEAAAOF0ftH+LC+zGoA7BoBt/qIl7gRoXgugdfeLZrIPQLUAoOnaV/Nw+H48PEWhkLnZ2eXk5NhKxEJbYcpXff5nwl/AV/1s+X48/Pf14L7iJIEyXYFHBPjgwsz0TKUcz5IJhGLc5o9H/LcL//wd0yLESWK5WCoU41EScY5EmozzMqUiiUKSKcUl0v9k4t8s+wM+3zUAsGo+AXuRLahdYwP2SycQWHTA4vcAAPK7b8HUKAgDgGiD4c93/+8//UegJQCAZkmScQAAXkQkLlTKsz/HCAAARKCBKrBBG/TBGCzABhzBBdzBC/xgNoRCJMTCQhBCCmSAHHJgKayCQiiGzbAdKmAv1EAdNMBRaIaTcA4uwlW4Dj1wD/phCJ7BKLyBCQRByAgTYSHaiAFiilgjjggXmYX4IcFIBBKLJCDJiBRRIkuRNUgxUopUIFVIHfI9cgI5h1xGupE7yAAygvyGvEcxlIGyUT3UDLVDuag3GoRGogvQZHQxmo8WoJvQcrQaPYw2oefQq2gP2o8+Q8cwwOgYBzPEbDAuxsNCsTgsCZNjy7EirAyrxhqwVqwDu4n1Y8+xdwQSgUXACTYEd0IgYR5BSFhMWE7YSKggHCQ0EdoJNwkDhFHCJyKTqEu0JroR+cQYYjIxh1hILCPWEo8TLxB7iEPENyQSiUMyJ7mQAkmxpFTSEtJG0m5SI+ksqZs0SBojk8naZGuyBzmULCAryIXkneTD5DPkG+Qh8lsKnWJAcaT4U+IoUspqShnlEOU05QZlmDJBVaOaUt2ooVQRNY9aQq2htlKvUYeoEzR1mjnNgxZJS6WtopXTGmgXaPdpr+h0uhHdlR5Ol9BX0svpR+iX6AP0dwwNhhWDx4hnKBmbGAcYZxl3GK+YTKYZ04sZx1QwNzHrmOeZD5lvVVgqtip8FZHKCpVKlSaVGyovVKmqpqreqgtV81XLVI+pXlN9rkZVM1PjqQnUlqtVqp1Q61MbU2epO6iHqmeob1Q/pH5Z/YkGWcNMw09DpFGgsV/jvMYgC2MZs3gsIWsNq4Z1gTXEJrHN2Xx2KruY/R27iz2qqaE5QzNKM1ezUvOUZj8H45hx+Jx0TgnnKKeX836K3hTvKeIpG6Y0TLkxZVxrqpaXllirSKtRq0frvTau7aedpr1Fu1n7gQ5Bx0onXCdHZ4/OBZ3nU9lT3acKpxZNPTr1ri6qa6UbobtEd79up+6Ynr5egJ5Mb6feeb3n+hx9L/1U/W36p/VHDFgGswwkBtsMzhg8xTVxbzwdL8fb8VFDXcNAQ6VhlWGX4YSRudE8o9VGjUYPjGnGXOMk423GbcajJgYmISZLTepN7ppSTbmmKaY7TDtMx83MzaLN1pk1mz0x1zLnm+eb15vft2BaeFostqi2uGVJsuRaplnutrxuhVo5WaVYVVpds0atna0l1rutu6cRp7lOk06rntZnw7Dxtsm2qbcZsOXYBtuutm22fWFnYhdnt8Wuw+6TvZN9un2N/T0HDYfZDqsdWh1+c7RyFDpWOt6azpzuP33F9JbpL2dYzxDP2DPjthPLKcRpnVOb00dnF2e5c4PziIuJS4LLLpc+Lpsbxt3IveRKdPVxXeF60vWdm7Obwu2o26/uNu5p7ofcn8w0nymeWTNz0MPIQ+BR5dE/C5+VMGvfrH5PQ0+BZ7XnIy9jL5FXrdewt6V3qvdh7xc+9j5yn+M+4zw33jLeWV/MN8C3yLfLT8Nvnl+F30N/I/9k/3r/0QCngCUBZwOJgUGBWwL7+Hp8Ib+OPzrbZfay2e1BjKC5QRVBj4KtguXBrSFoyOyQrSH355jOkc5pDoVQfujW0Adh5mGLw34MJ4WHhVeGP45wiFga0TGXNXfR3ENz30T6RJZE3ptnMU85ry1KNSo+qi5qPNo3ujS6P8YuZlnM1VidWElsSxw5LiquNm5svt/87fOH4p3iC+N7F5gvyF1weaHOwvSFpxapLhIsOpZATIhOOJTwQRAqqBaMJfITdyWOCnnCHcJnIi/RNtGI2ENcKh5O8kgqTXqS7JG8NXkkxTOlLOW5hCepkLxMDUzdmzqeFpp2IG0yPTq9MYOSkZBxQqohTZO2Z+pn5mZ2y6xlhbL+xW6Lty8elQfJa7OQrAVZLQq2QqboVFoo1yoHsmdlV2a/zYnKOZarnivN7cyzytuQN5zvn//tEsIS4ZK2pYZLVy0dWOa9rGo5sjxxedsK4xUFK4ZWBqw8uIq2Km3VT6vtV5eufr0mek1rgV7ByoLBtQFr6wtVCuWFfevc1+1dT1gvWd+1YfqGnRs+FYmKrhTbF5cVf9go3HjlG4dvyr+Z3JS0qavEuWTPZtJm6ebeLZ5bDpaql+aXDm4N2dq0Dd9WtO319kXbL5fNKNu7g7ZDuaO/PLi8ZafJzs07P1SkVPRU+lQ27tLdtWHX+G7R7ht7vPY07NXbW7z3/T7JvttVAVVN1WbVZftJ+7P3P66Jqun4lvttXa1ObXHtxwPSA/0HIw6217nU1R3SPVRSj9Yr60cOxx++/p3vdy0NNg1VjZzG4iNwRHnk6fcJ3/ceDTradox7rOEH0x92HWcdL2pCmvKaRptTmvtbYlu6T8w+0dbq3nr8R9sfD5w0PFl5SvNUyWna6YLTk2fyz4ydlZ19fi753GDborZ752PO32oPb++6EHTh0kX/i+c7vDvOXPK4dPKy2+UTV7hXmq86X23qdOo8/pPTT8e7nLuarrlca7nuer21e2b36RueN87d9L158Rb/1tWeOT3dvfN6b/fF9/XfFt1+cif9zsu72Xcn7q28T7xf9EDtQdlD3YfVP1v+3Njv3H9qwHeg89HcR/cGhYPP/pH1jw9DBY+Zj8uGDYbrnjg+OTniP3L96fynQ89kzyaeF/6i/suuFxYvfvjV69fO0ZjRoZfyl5O/bXyl/erA6xmv28bCxh6+yXgzMV70VvvtwXfcdx3vo98PT+R8IH8o/2j5sfVT0Kf7kxmTk/8EA5jz/GMzLdsAAAAEZ0FNQQAAsY58+1GTAAAAIGNIUk0AAHolAACAgwAA+f8AAIDpAAB1MAAA6mAAADqYAAAXb5JfxUYAABHeSURBVHja5FxrbFtHdv5m7puvS1KUrIethw1HluIEVhKkmwCF4+0W7rZFETRAYgdbtH8LFN12f3SxPxdtgSZA0BT9WbRoscX+KwoUxWKRAN02WTtrR3UiRZEsS4wlWU+KtMT35X3M9Ic1F9SDFEmRyqMXyI9Yl3dmznfOmXO+c2bIO++884UkSQkALk7pkSQJxWLRvHfv3h9VKpWf9Pb24tKlS/A87yyldJJSagDwOjE2IQSU0sDMzMx/b21t/ZYkSf6/K4qC5eVlbG5uAgB6enr+8I033vgHSmmBc45OzYcQEpqamvq3dDp90zAMTExMQJZlcM7/U5bl3wRQ7BQWsixLa2trlbm5uRcBLI2OjqK3txee550hhPyvJEnhDmNhzM7OfrSxsfHtg1isrKxgY2MDhBDE4/EbN27c+BdZlku8zWBQSlGpVKL37t37QaVSeXdvXrBtG3IkEomaphlWFAWdUoKDQqlUKkgmk0in05pt24jH44jFYnAchxJCoqZpansK0pHxFxcXsb6+Hs7n86CUgnOOeDwOzjkGBgbgOA42NzdBCBmIRCKKaZoxSmnH5DE3N4eNjY1QoVCA4zgIh8NQVRWMsXAoFFINw1A7IQtKKTKZDFZXV92dnR3KGIMsyz4WAGKmaQY6pRuUUiSTSaytrUVyudw+LABgYGAArusKI+k3TVONRqNqO7EghMB1Xdy9exepVEr3PA+GYSASiYAQArlSqWB1dRXZbPZUdg9KKR4/foylpSUQQgAAjDG4rgvXdeF5HrLZLHK5XEeU0XVdLC4uwrZtf2xN04RCghCCkZEReJ4H13VRKpWws7ODXC7nz7ed87FtGwsLC3Bd15+P53n++Nvb28hms3Bdt+3jU0qxsrKCx48fg1K6b1yBxaNHjzqGhed5h7BQVdXHAgCGh4f9+ZRKJWSzWWSz2bbJglKKbDaLZDLp60IoFALnHJxzyIQQMMZgWdapGYht26jlBYTgyuVyXSHU+r1YWD0D4Zz73yaEIBQKiVeGGWNRQggbGhrKcc57dV2HZVmwLKtjBrIXZtVcj2VZHTEQIWvhuY/6O2PsWCxOMnYdLAYZY12EEG9oaCjvum6/ruuwbbutWFBK4TgONE2DaZq9kiQNc84jAAil1JWrJ3waTz1lEAoh3jnqPSHY1dVV5PP5fe9QSpFIJBCLxeqOLX7DOYeiKHj55ZcRCATAGPtbTdNeFX8Ph8MwDMPfXTuhJI18s548Tjp+o0rUaT3gnEOSJLz00ksIhUJgjL2ladoN8U4oFEIgEEA+n28rFpxzGIaB4eFh9PT0fD8Wi31f5CCzs7M7skiajxuwmRhUkiR/i2xVKeoJdnd3FwsLC+Ccf6ooSoZzLjHGIEnSC4lEIkQprTl+rfnKsgzXdSHLMnRd93ei1dVVPH78+JAhNiuTTip+vfmcRl5ZawdqZXxZln0sJEmCYRj+N9bW1pDJZNqCRfX7lFKoqopgMIhgMOiHngsLC5AppVhYWMDy8nJNTxGNRtHb2wvBMtQDnDGGpaUl7O7u1g2DZFluWYicc8RiMWxtbf1AVdVfUErF7vH34+Pjf1IsFpuKUznnYIyBMYZsNosvvvgCjuP4cXG1xyKEYHt722e62uHBZFk+5E2bMbLNzU2kUqlD6zVNE319fcfidtIwaXl5GSLJrla67u5udHV1NeUAGGM+HrlcDktLS/tylINYpNNpbGxsNCXr3t5eRKPRfX+zbRsrKyt49OgRCCFYXl5GpVKBPDk5ef/BgwfrjDF+cCGcc8d13YloNHpJJE71wCOEIJfLYXl5GZZlPdJ1/ZcAlKPe1XU9yDl/KBLjZoGRZRmMMRSLRUQiEeEBLFVVUSqVTgS8SJQPendCCBzHwfLyMjKZzIphGLdqra8ZA1FV1ZBl+ZaQbaPyEIzg8vIydnd3FwzD+BiAuofbs6ZpPt0IbicxkGw2i6WlJXie90tN01Y55zJjjFFKr/X393criuITEK3sroI4OAoL13WxsrKC7e3tVV3XPySE1MXC8zxHVdUXz507d0GSJHied6SjFGNRSiHPzMz8hq7r5VrxvmEY3x0fH/+ZpmlIpVINKVd3dzcePXp0y7KsN/fiySPfY4yBUoqRkZGWABRCEh64nYpQK/RhjCESiSCXy33oOM73RDh2UiMRTN7g4CAMw/B3sEY8uGmayOfzP3Nd988URQGlFLquXxsfH/8vwzAawu0kc4/H49jY2PhrVVV/TgiBJElIJBJ/Mz4+/sNCoYDd3d2Ww8h6YajneQiHw8hms79yXffNelh4nodgMIiRkZGbFy5c+GmxWDySmTw4FpVluVxrYrquwzAMRwi90QVJkgRJkpDL5VAqlQ79VizCdV0MDAygv7+/JS9zmuTCwZhbkiSUSiWfhTrpwxiDYRiiYNqwcgpPRylFqVSCpmkIBALQdd09GLp1KswSOadlWQgGgzAMA7quO43ktu0av1QqoVKp1DQkwzAwOjqKeDzuNEM60FqDGoYBkezWo06PS4CEkRw1cUopnn766RMJsdm5tRucWkYiFLfaA9b7j3OO0dFRmKbZFMEg1u95HuLxOKLRKDRN80OTTj9ibEIIuru7EQqF/CT7OKKmncwcIQTlcvkQFp7nIRAI4NKlS9B13af5GyYNahmHAO2kjJPISwD4jITg/wcHB9HX19fy7iEKS4FAAJVK5Us1EgBQVXVffaNSqTScIFNKMTw83JRxiN/JsoyRkZFfi0ajf8E51znntqqqF3t6elCpVDrqQCilMAwDY2Njb0YikSue56mmaZYTicSvR6NRWJa1j7rnnO9Luts5N4EF5xyapsF1XQQCAYyOjvpOo1nCQq72BGKxneDbhZEEAgE4jgNd1/Hss8+2JCDhtSil6O3thaqqfrX1y9hNqo1EkiTk83kUCgVfno3MqVgsYmZmBteuXWvYYYg6zvDwMEZHR7/V1dX1LaF0qqpCMJQi12v3wxhDKBTCmTNnMDY29gfVOUB1gbXaaczPz/uyETWI6rpUO6jzcrkMzjmi0SieeuqpfZX5Zh/5oCfoVMwojIQxhnA4jKtXryKRSDSUjB5VtwiHwzhz5syfhsPh3/M8T2GMVXp6eq7FYjHfi5xmfiKMpFQq+VXvZkIIVVXx6aef4sqVKwiHww2HR5RSaJqGfD6/b7cQ80mn0x2Vg6hbpNPpfUZICMHOzg5Ev5vAfy/kvm0Yxj8SQoxSqSQrirIOAJqmoR09eIQQWJaFc+fO+WFVy+urFvJpKFQ+n8f169dx9uzZlsIiYWADAwMYGxt7VVVVX6CapqFQKKBcLn8p4VahUNgXAzdjpJxz7Ozs4M6dO7h+/XpT+YNlWVhbWztSsU4jUS4UCkf2a4k8rPpJJBJIJpOzhULhnxRF8Y28UqlgaGhIdDS0zWmd9Fuy2A5P6xHe/yRWLUkSOOdYW1s7BP7u7i6KxSI61X1bS7lVVcWFCxd8JeWcQ9f1P47H47/NGCsdsx4jk8ncyufzbxWLRZTLZSiK0jC4nWhDaYVJOk5Guq6jp6cHwWDw267r/iulVJEkSdvd3Z3LZrM/EsYWDAbxVXnkQCBwqgNWF2NO8hSLRb8v5ziv1emHMQZd1/HCCy/4ieheveTF8fHx3xXJe60QaXNzE++99x7xPO+tVuoqrTJCgh5uh4Ec9Z3qJJxz7lPAFy5cOJ9IJM4DQCaTwfvvv3/WcZwf1ZNTqwTCiQ3ktM6BfBle6zTnwjlHpVLxQyORGK+vr8NxnCNDJlGZ/+yzz5BKpfwcotlWE9d1USgUWjKsWrWDZuP9g2GtYEMPKr3jOFhbW8P29jYYY/j888+xvr4Oy7L89bdjN+ScI5/PN02bHzKQr6NxCO9Qq9J92msSilYqlRAMBve1RjDGkMlkfEWsnp9gdsrl8r5coZlWE8/zMDc3h+3tbTTrgUVo2Co5QylFoVDA9PT0k76lvf46wYgODg5iYGBg37dd10UmkwHwpEZRLBb9tbczTOScY2ZmBpRS9Pf3t0QG7WOxvm67R6FQONRzJc4TaJp26vMpl8u4d+8enn/+eQSDQTiOA9Hvk06nfQMRYUb1LthqKCAMjDEG27Z/tbOz8++UUr1JRSKSJHmSJO2Uy+Wmz34I487lcj9xXXeWEKK6rlseGhr6nYsXL14lhKBYLB7qwG3WGTQb8gpnNDU1BQDo7+/36y/faAOhlCKXy2FqaurJmeEqryVJEkZGRtDf33/qOYjwppOTk5iYmPCLl5OTk0gmk/67g4ODGBoaalsYAQDBYBCapt0pFotvtxIyifDPMAycPXu2KQaNUopQKARFUX5aqVR+7jgOTNNEd3d3pKen52oul0OxWDxVLKrnxjnH1NQUOOfo7+9vOtz6Wu4glmVB0zRkMpl3Hcf5jBCiua5bunjx4vfGxsa+I2Ly02B2qgUueoI+/vhjmKYJAP+8uro6SQixPc9zh4eHey9fvvyXhBDpKILhpIZiGAYkSWo6rxC50MTEBLq6upqm36uLzNFo1G9xP+1w9yjlF/nh9PQ0OOcYHBz85hsIpRSBQACqqv6H4zi/EBc/dHd3X47FYt/Z3d3tKAu31y6hlEolIklS5OA7tm0jn88TSulHAP5HVP5jsdhIT0/Pj7PZrNSJQqagUgE0ZSSMMZimiYmJiZZjdWEk4jTnaRrGHhZ07waWmvO7e/dunjEWGBgY+GYbiFiwYErErSiihb6T4EiShGg0ildeeeXVeDy+DYA0OF+uKIpkmqYiKv2dkkuzRmLbNq5cuQLTNE/c09aptpZaWJimiatXr343FoulyDGLZYzxUCikJRIJn/U7Tj5fWwOp3kIjkUjbFE40/4lET9Q0qvOc/v5+nD9/Xo1Go13NjEsphWVZHY/JmzES27aRSCTw3HPPtbx7dNIBiqMTR2FBKUVfXx/Onz+vxmKxhrAQOexBMuIgcSDyl6+9gbRjOxcCURQF29vbePDggd9PFYvF9h3PFMxRMplsyVM6jgPXdTvuZYWRiDrFUUZi2zZisRhef/11n3n7KoTPAot0Or0Pi2g0img0uk+RHcdBMplsuCbGOffrUtXfyWQy2NnZ8f9NnIn/RhjISRUpl8v5xbbbt2/7lzSoquoGAgGJUkqqE0BRFGz1FORptYWItm8x3+pxRd528+ZNdHd3t0SBduIRDa2FQgEfffSR32ypKIqr67pEKSXVchft880WV4UsxEGz+fl5ZLNZiP4wcXnH/2sDEYW26elpBAIBpFKpP5+fn/+xLMvMdd3imTNnbly+fPmvHMfZ511OW9HbvZPYto2uri7cvHkTiUTiK2Ec1VgEg0Gk0+kfzs3NvS3Lsud5XrGrq+v3n3nmmbc9zzt0y8xJsXBdF5FIBOVy+e9SqdS7hJAIACJJkis3ImCRENW73qV6oidtXag+idesBxZx61HvHTU/zrnfIEcpXRKhz97FEDwYDPqUcafuxar33eq1HHd++ridBHjSTZ1IJHDz5k10dXUdaxz1uoEbwaIWlrXWVIXFCqV0xU+WZdkLBAJ+7tDOk4gipDNNc5MxtiQq/YSQJzcrHhcTSpKEhw8fYmFh4djYWXiseoIRiddBY6u+inN1dbXuWAfPHojvuq6L2dnZQ+cTqucny/I+xatUKvtue6wGz3VdzM/PY2NjoyN5w8H5iBhc/P/Dhw8xOztbs8FTHJpqBBdZlnHu3Dm89tprvnHUit1FfL+4uIiVlZW636/GuRoLz/Nw//59pFKpmlgIxyt+Z9v2viMD1VgwxjA/P4/19fW2YiFkCDy5KkmSJKTT6Scyq0fr7XH+7ieffFKZn58vNXr9ZSAQCFuWVTyYjApmYmtrC7ZtH6rYSpLEFhYWdmdmZgwAXh3PRTVN8zjnGRGDSpKEQqFQ+uCDD9ji4mK2ngBlWQ4oipIXLfecc2xtbfmhSNWVM2u3bt1y5ufnC50MpxRFCcmyXBCx9MbGBnRdRzqdzt+5c8e2LKtYbz2apoVt2145jrBwXRd9fX1wHAdLS0vH7RwsmUzuTE9Puw1gAcZYWmCxdx2T9eGHH/KFhYXdY7AwFEXJVWORSqX8OxGqjGP99u3b9v3790uEkLZz5JqmRQFYgqYWu9X/DQDw1qi3svkqRQAAAABJRU5ErkJggg==" /></a>
+                    <span class="subText" >Map Generator</span>
+                    <span>
+                        <a href="http://www.reddit.com/r/tagpro" target="_blank"><img alt=""border="0" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAA3NCSVQICAjb4U/gAAAACXBIWXMAAAsSAAALEgHS3X78AAAAHHRFWHRTb2Z0d2FyZQBBZG9iZSBGaXJld29ya3MgQ1MzmNZGAwAAABV0RVh0Q3JlYXRpb24gVGltZQAyNy8zLzA56KykjAAABBF0RVh0WE1MOmNvbS5hZG9iZS54bXAAPD94cGFja2V0IGJlZ2luPSIgICAiIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNC4xLWMwMzQgNDYuMjcyOTc2LCBTYXQgSmFuIDI3IDIwMDcgMjI6MTE6NDEgICAgICAgICI+CiAgIDxyZGY6UkRGIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CiAgICAgIDxyZGY6RGVzY3JpcHRpb24gcmRmOmFib3V0PSIiCiAgICAgICAgICAgIHhtbG5zOnhhcD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wLyI+CiAgICAgICAgIDx4YXA6Q3JlYXRvclRvb2w+QWRvYmUgRmlyZXdvcmtzIENTMzwveGFwOkNyZWF0b3JUb29sPgogICAgICAgICA8eGFwOkNyZWF0ZURhdGU+MjAwOS0wMy0yN1QxNToyODozMVo8L3hhcDpDcmVhdGVEYXRlPgogICAgICAgICA8eGFwOk1vZGlmeURhdGU+MjAwOS0wOS0wOFQyMzoxMzowMVo8L3hhcDpNb2RpZnlEYXRlPgogICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KICAgICAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIKICAgICAgICAgICAgeG1sbnM6ZGM9Imh0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvIj4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgPC9yZGY6RGVzY3JpcHRpb24+CiAgIDwvcmRmOlJERj4KPC94OnhtcG1ldGE+CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgpRAV/wAAArtQTFRFX5nPmr/jm8HlnMLlrMrmrcvorMrmrcvnj7jgkLnhkbrhm7/hnL/hnMDhAAAAExQUHBwcHB4fHR4fHh4eHh8gICAgKy0vLi8vLi8wMDAwNzk7ODo8OTs+OTw+Oj1APDw8PT4/Pj4/Pj8/Pj9APz8/QEBAR0pOSkpKTE1PTE5PTk9QWVpaWlxeWlxfWl1fW11fXV5fZGhtZ2pubW1ubW5ubW5vbm5vbnJ2b29vcHBwcnJydXl8d3t+eHt+eHt/gICAjLbejbffjbjfjbjgjrjfj7jfj7jgj7ngkLngkbnfkbrgkbrhkrrfkrrhk7rgk7vglLvglLvhlLzhlbzhlpmclrzglrzhlr3hl73gl73hmb7hmb/hmb/jmr7gmr/hm7/inJ6fnZ6enZ6gn5+fqcjlq8nmsbe9sri9sri+t8DJucLMusPMvL2+vMTMvb6+vb6/vr+/vsTKv7/Av8DAv8bNwMDAwMfNw8PDw8jNxMnOxMrOy9Paz8/Pz9bc0eP00eP20eT30uP00uT20uX30+P10+T21OX21Ob51Of51dre1trf1ub21uf31uf41uf519ve1+f31+j52Of32Oj32On52On62ej32en52en62ur63Ov63t/f3uv44Oz44O354efu4u344+754+/75O745e735e/55fD75vH65vH75+fn5+/35/D55/D65/H55/H76PH56PL76PL86fL66vL56vL66vP76vP86/L56/P66/P76/P86/T87PP57PP67PP77PT87fP67fT77fX77fX87vT77vX87+/v7/X77/b87/b98PDw8PX78Pb78Pb88Pb98fb78fb88ff98vf88vf98/f88/j88/j99Pj89Pn99fn99fn+9vr99/n8+Pr9+Pv++fv+/UQB/n9R/pVw/pZx/q2P/sWw//Pv//Tw////FiqUKgAAAA50Uk5TALW1tbW1trb4+Pj4+Pj91gQPAAACAUlEQVQYGQXBTUgUUQDA8f9783Z2d9SNygSFMjD7Eg9CaIawHT1oxUYRQVCBl+hU6K1O0cWOHpQSPEoRxQZRgnUQI7GjICRIeCkKx2XcXXff1/T7CbJhySMQHumlB5FK/76pRebu1XMpSLz0Ei/xEn4sLaiweLq6p6IECqlIVJQUkkLQLxeDG7cqzWA/CGpRXAtqEFiTiLjnr/TKxHGrdzaORPy1Hsefni75rEIJneSqDaqgD1YXXrV0/bn5MbrsnSSom6ypWJut2C9j64+Odz5u260YJ70OjdnToTah3ilunJn0RTemJQqV0OJJSFq+dxQSdudbq1v5plS27mg41r/9qzkmomOXXIhGpcpl1spRs9ExODwOfFhdeZPL1q71OSXc8r3fb+9PAcD4ONPz1ztf3zESpCnPTWG1B68tk3NlIwXS69JsbxFvfQqpt55i72wJL7XrOXoBZCAkSBFIGGw/20QJ79o8kAEQWYA0qjohqdeHlgFmAGYAPg9r46UJsxczo8DywMjIwAowGg6aMFXS6L1nL/quTLxjhxNsvyyff7IZ7nuV2ipbD3bKpTTfnsYHnJrqXievrDIcqpqt/MOTucU9jtyu/ar8JJQ6ELnpQiXONcg1ugSNGg1E2nF4+7nSa7393RZlAZRVVll1sLnRFIjcEIEDpAdESuBYa6T/AX4j+11yJTzfAAAAAElFTkSuQmCC" /></a>
+                        <a href="https://www.facebook.com/tagprogame" target="_blank"><img alt=""border="0" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAIGNIUk0AAG2YAABtmAAAAAAAAG2YAAAAAAAAbZgAAAAAAABtmEf7Sw0AAAPNSURBVEiJlZVPbBVVFMZ/986deX/ov2dLDSC+QimhREABTSTKwgUBNLpBoi7duTRsdOHOvYkrTUxcoFEXoiaEBEmAlBgFEhYNGiJKGgMBqaW0r+/NzLtz73Exr68t9NHyLSaTc+d83z3fuWeuooVNz31c3fty9ZNKT/kNBA3C40IrTWLd9RsTNz8Y++79EwAKYOjFY9teP7z/5K7RjcO2meLc45MDKAVhFDJ1P87OXvj92M/H3/vUAOqFPds/3DlaHf737hTOC0otT7CcrHpgXQT6K91m186NH13c8c5JA/QOrO3bPT1TJ04zVCf2DhBZKquU4r+pWbrWlAaqg927DVC2Ni3U6ilN61ZN7AW885SKIcbolhikzSx/dxqb2F4DqEZiaaQW21ydgBehXDQc3r+NbcODlEshItCIm3z27UXuz6aIBue8NgBxPSONLZm1K1sCeCe8dWgH+/YMLVkrRAZrPc3UknkBZzEAaWqJE0uWZSvv3gv9fWWe3b6+HYsTy+R0nSSxNOImcZqROY+DlkDT0kgszq0s4Jxn0Gii0LRjx3+4wrlLN4jCoNVHRWozvGsJzDVSSvUmgfad50vlTYwTy9xciiz6cOLmNHen6hTCgCgyKKWYrSXgwUAJnwkztYRipAi0XpZfEMIw4MBLIzy9oQ+96Lt9e6psWNdL5jznf7vB9EyMtQ50q4K8dGGuYTGBJtDqoXnwIoRG8+6be6n0lJasvfbKKAB3JmucOneNNM3QQZ5vIC99fgpt5rHkY6+VYn6svQjW+o69AZi8V6c210RphQjzFi0PEXAizDdFPDTSjM+/vkj1qQpHX91JoHPxn878wcStaW7emUEAhWrnGQCPAslJHoVm6vjm5Dgjmwc4cugZAh0AcHrsOmOXJyiVDCYIYNFZ0e3HKhFFhkK4tPAwDCgUWuQtqFZ1GmIIOjq1LFb6mQu0e9diVoi0GrNSsnvYSiGPLeQLimBBoFgsKhUYnFuhCeQny4RLTTWBJioEmHDBojCMCAtGGYCD+4dUaU0f9Xrc8bKZhxeh0l1c2L0Iu0bX0Vcpt0+VUpqergJn3DgGqM/cm/xr86ah4Vu3M/wjbjTIj24YBu1BVEoRGk0UmVxAoL/SRW12pvbn+OUJA9ROnfjyq96+yvNbtow8kaRNskVWPajlBbrLIU40WnLfe3q6GLAKE2iKhZDaXI2xs6e/v3Z1bHw+f+3a6tajBw6+fWRwcP2TXrIO9AtRoxf8zrxDELQKVJwm8ZVfz/9y6cKPXwBXFzP0A1uBwY7Mq0Md+Bv4B8j+Bxqera/xGqIrAAAAAElFTkSuQmCC" /></a>
+                        <a href="http://twitter.com/thekoalabeast" target="_blank"><img alt=""border="0" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTM5jWRgMAAAAVdEVYdENyZWF0aW9uIFRpbWUAMjcvMy8wOeispIwAAAQRdEVYdFhNTDpjb20uYWRvYmUueG1wADw/eHBhY2tldCBiZWdpbj0iICAgIiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+Cjx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDQuMS1jMDM0IDQ2LjI3Mjk3NiwgU2F0IEphbiAyNyAyMDA3IDIyOjExOjQxICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4YXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iPgogICAgICAgICA8eGFwOkNyZWF0b3JUb29sPkFkb2JlIEZpcmV3b3JrcyBDUzM8L3hhcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhhcDpDcmVhdGVEYXRlPjIwMDktMDMtMjdUMTU6Mjg6MzFaPC94YXA6Q3JlYXRlRGF0ZT4KICAgICAgICAgPHhhcDpNb2RpZnlEYXRlPjIwMDktMDktMDhUMjM6MTM6MDFaPC94YXA6TW9kaWZ5RGF0ZT4KICAgICAgPC9yZGY6RGVzY3JpcHRpb24+CiAgICAgIDxyZGY6RGVzY3JpcHRpb24gcmRmOmFib3V0PSIiCiAgICAgICAgICAgIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyI+CiAgICAgICAgIDxkYzpmb3JtYXQ+aW1hZ2UvcG5nPC9kYzpmb3JtYXQ+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIKUQFf8AAAPwSURBVEiJjZbNb5RVFMZ/92OG6UyhrRICohETmhTix6ImroyJYeVGFqzEvf+CH4k7N/wdsAA3mBiXbrEmRA0YammthNIKFMp0KNN5773nuHjv+85MC+pNbmbe+/Hcc57znHOvYX6erz//4lK/3/9YVDtUzYDFgDGICADWWgBEBXT4raoYY8o5Eay1O81m47tvLlw4b766fPmiwZx/+9QpptrteiGAcw6AlBLOufp3dGzvvLWWzW6XG4uLiMol/6y/e/bdt96k026zHQIhRoy1aLYaDKD7wEQVVQUdn2t4z2S7zanZk1y/cfOsF7QzdfAgvcGAkCLOOmKKAHR3dll98IhBiBw+NMmJIzM0fYMiRowxWGsAQ8qUqTEESSQRXp6aQtGOjzFhrCWIkERJEnHOkpLQwvLlmQ94qT3Bwp01FtbuMTU5pJBUUWmzB4JzjiJFOt4jCh6UECMxU5NSAlMG95P5d5hoeADee/1VtosBd5/2RnWAAhhT7gOSSE1hTBEreWlIpWsYQxIhidBqeDSDKNB0vj48iaDV/xGjMIYiBDAgongRIcRQB2lMFaqMtqe7A35ZuTs2dqjd4rXD0zCy1jlHCBERwYsoUJ5qjSlpygpK4/icmZvlzNzs2NjvG/f5cWWFiaav1VSEABMtMAYvqsQYS1DnINOTRPZ58Lw2d/QIG71tVh4/AjMMdIgRUcHHFMd4B3DZi8R/HwDQbPqMoTWOHDhQxqDScRX9khoFY4j/A3/54UOWHjwsgXMMnXMkEWKKJUUiWnsBLw7ywupf3Lr/974yUYGSy0wSocL1oiOcjywuQuBZETmQ8wBgNyT6g4Jmww+NyZ4XIYzVq+oQG2NCVLN2h7FIItzv9UiqdT99/BiDoKxtbtf9ybNBnUOjGKJl91CW2LFA54S5s/WIozNTtQeTEy0++/D9Mdpurq1zbXmZhi/LRRFyTmX5W82lIoRACAGT638IgcV799gNEVFe2E8ff4W5Y8fqPZWxqjqkaG+aV170i4IffvuVXr//r0py1ozTI0LINFmMIWZqKvA4Upc2trb4duEnrq+ustnr7QNfXF9ncWN9qMIRI0UUHyURqyBTXoOiSoqxVtQgJa7dXuLnP1fGJLpXpnslG1PCS0zlpip7JaFS3lbOOYqiGAOrxp53hVbfRpX+YFAarIadzW6XVrMJQAgRzfqueH1ejEZ7EUK91hhDZ6LF424XRXe8942rt/5YPH/ixBvMTE8zPTlJFMHnF0MUwVpTZjvgrSXW9zX1WO2lJB5vPWFp+Tbe+auG+Xk+OnfuooqeVdVOfnYA1M8VAJOlV8dpzyHD6w2MMTuNZuPq91eufPoPiLUnfCKU4MAAAAAASUVORK5CYII=" /></a>
+                   </span>
+                </td>
+            </tr>
+            <tr>
+                <td align="right" style="width:30%;"></td>
+                <td align="center" style="width:40%;">
+                  <div class="tabs"  style="width:550px;">
+                       <div class="tab" style="padding-left: 5px;"  >
+                           <input type="radio" id="tab-1" name="TabsGrp1" checked="checked" />
+                           <label class="curvedTab" for="tab-1">GAME</label>
+                           <div class="containerTab"  > 
+                                <table  align="center" width="100%"  cellpadding="0"   cellspacing="0"  >     
+                                    <tbody>
+                                        <tr> 
+                                            <td colspan="2" style="padding:5px;"></td>
+                                        </tr>
+                                        <tr> 
+                                            <td colspan="2" valign="middle" align="center" class="menuHeaderText">Game Levels</td>
+                                        </tr>
+                                        <tr> 
+                                            <td colspan="2" style="padding:20px;"></td>
+                                        </tr>
+                                        <tr> 
+                                            <td align="right" class="menuText">1-Player:</td>       
+                                             <td class="radiobuttons brown singlechar" style="padding-left:3px; padding-top:10px;" ><center>
+                                                <input id="rbLevel1" onclick="setGameLevelSingle(1);" type="radio" name="rbLevel" value="1" /><label for="rbLevel1">1</label>
+                                                <input id="rbLevel2" onclick="setGameLevelSingle(2);" type="radio" name="rbLevel" value="2" /><label for="rbLevel2">2</label>
+                                                <input id="rbLevel3" onclick="setGameLevelSingle(3);" type="radio" name="rbLevel" value="3" /><label for="rbLevel3">3</label>
+                                                <input id="rbLevel4" onclick="setGameLevelSingle(4);" type="radio" name="rbLevel" value="4" /><label for="rbLevel4">4</label>  
+                                                <input id="rbLevel5" onclick="setGameLevelSingle(5);" type="radio" name="rbLevel" value="5" /><label for="rbLevel5">5</label>         
+                                                </center>                              
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" class="menuSubText">(Race)</td>  
+                                            <td class="radiobuttons brown singlechar" style="padding-left:3px;"  >
+                                                <input id="rbLevel6" onclick="setGameLevelSingle(6);" type="radio" name="rbLevel" value="6" /><label for="rbLevel6">6</label>
+                                                <input id="rbLevel7" onclick="setGameLevelSingle(7);" type="radio" name="rbLevel" value="7" /><label for="rbLevel7">7</label>
+                                                <input id="rbLevel8" onclick="setGameLevelSingle(8);" type="radio" name="rbLevel" value="8" /><label for="rbLevel8">8</label>
+                                                <input id="rbLevel9" onclick="setGameLevelSingle(9);" type="radio" name="rbLevel" value="9" /><label for="rbLevel9">9</label>
+                                                <input id="rbLevel10" onclick="setGameLevelSingle(10);" type="radio" name="rbLevel" value="10" /><label for="rbLevel10">10</label>
+                                            </td>
+                                        </tr>
+                                        <tr> 
+                                            <td colspan="2" style="padding:15px;"></td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" class="menuText">2-Player:</td>       
+                                            <td class="radiobuttons brown singlechar" style="padding-left:3px; padding-top:10px;" >
+                                                <input id="rbLevel11" onclick="setGameLevelRace(1);" type="radio" name="rbLevel" value="1" /><label for="rbLevel11">1</label>
+                                                <input id="rbLevel12" onclick="setGameLevelRace(2);" type="radio" name="rbLevel" value="2" /><label for="rbLevel12">2</label>
+                                                <input id="rbLevel13" onclick="setGameLevelRace(3);" type="radio" name="rbLevel" value="3" /><label for="rbLevel13">3</label>
+                                                <input id="rbLevel14" onclick="setGameLevelRace(4);" type="radio" name="rbLevel" value="4" /><label for="rbLevel14">4</label>    
+                                                <input id="rbLevel15" onclick="setGameLevelRace(5);" type="radio" name="rbLevel" value="5" /><label for="rbLevel15">5</label>         
+                                             </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" class="menuSubText">(Race Mirrored)</td>    
+                                            <td class="radiobuttons brown singlechar" style="padding-left:3px;" >
+                                                <input id="rbLevel16" onclick="setGameLevelRace(6);" type="radio" name="rbLevel" value="6" /><label for="rbLevel16">6</label>
+                                                <input id="rbLevel17" onclick="setGameLevelRace(7);" type="radio" name="rbLevel" value="7" /><label for="rbLevel17">7</label>
+                                                <input id="rbLevel18" onclick="setGameLevelRace(8);" type="radio" name="rbLevel" value="8" /><label for="rbLevel18">8</label>
+                                                <input id="rbLevel19" onclick="setGameLevelRace(9);" type="radio" name="rbLevel" value="9" /><label for="rbLevel19">9</label>
+                                                <input id="rbLevel20" onclick="setGameLevelRace(10);" type="radio" name="rbLevel" value="10" /><label for="rbLevel20">10</label>
+                                            </td>
+                                        </tr>
+                                        <tr> 
+                                            <td colspan="2" style="padding:15px;"></td>
+                                        </tr>
+                                        <tr>                   
+                                            <td align="right" class="menuText">Multi-Player:</td>                   
+                                            <td class="radiobuttons brown singlechar" style="padding-left:3px; padding-top:10px;" >
+                                                <input id="rbLevel21" onclick="setGameLevelMarsball(1);" type="radio" name="rbLevel" value="1" /><label for="rbLevel21">1</label>
+                                                <input id="rbLevel22" onclick="setGameLevelMarsball(2);" type="radio" name="rbLevel" value="2" /><label for="rbLevel22">2</label>
+                                                <input id="rbLevel23" onclick="setGameLevelMarsball(3);" type="radio" name="rbLevel" value="3" /><label for="rbLevel23">3</label>
+                                                <input id="rbLevel24" onclick="setGameLevelMarsball(4);" type="radio" name="rbLevel" value="4" /><label for="rbLevel24">4</label>   
+                                                <input id="rbLevel25" onclick="setGameLevelMarsball(5);" type="radio" name="rbLevel" value="5" /><label for="rbLevel25">5</label>                                         
+                                           </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="right" class="menuSubText">(MarsBall)</td>       
+                                            <td class="radiobuttons brown singlechar" style="padding-left:3px;" >
+                                                <input id="rbLevel26" onclick="setGameLevelMarsball(6);" type="radio" name="rbLevel" value="6" /><label for="rbLevel26">6</label>
+                                                <input id="rbLevel27" onclick="setGameLevelMarsball(7);" type="radio" name="rbLevel" value="7" /><label for="rbLevel27">7</label>
+                                                <input id="rbLevel28" onclick="setGameLevelMarsball(8);" type="radio" name="rbLevel" value="8" /><label for="rbLevel28">8</label>
+                                                <input id="rbLevel29" onclick="setGameLevelMarsball(9);" type="radio" name="rbLevel" value="9" /><label for="rbLevel29">9</label>
+                                                <input id="rbLevel30" onclick="setGameLevelMarsball(10);" type="radio" name="rbLevel" value="10" /><label for="rbLevel30">10</label>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                           </div> 
+                       </div>
+                       <div class="tab">
+                           <input type="radio" id="tab-2" name="TabsGrp1"  />
+                           <label class="curvedTab" for="tab-2">CUSTOM</label>
+                           <div class="containerTab" >
+                              <table  align="center"  width="100%"  cellpadding="0"   cellspacing="0" >
+                                  <tbody>
+                                      <tr > 
+                                        <td colspan="2" style="padding:5px;"></td>
+                                      </tr>
+                                      <tr > 
+                                        <td colspan="2" valign="middle" align="center" class="menuHeaderText" >Custom Maze Settings</td>
+                                      </tr>
+                                      <tr > 
+                                        <td colspan="2" style="padding:5px;"></td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Game Mode:</td>
+                                            <td class="radiobuttons brown"  style="padding:3px;" >
+                                                <input id="rbGameMode0" onclick="CustomBtnClick();" type="radio" name="rbGameMode" value="Race" checked="checked"  /><label for="rbGameMode0">Race</label>
+                                                <input id="rbGameMode1" onclick="CustomBtnClick();" type="radio" name="rbGameMode" value="MarsBall" /><label for="rbGameMode1">MARS BALL!</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Size:</td>
+                                            <td class="radiobuttons brown"  style="padding:3px;" >
+                                                <input id="rbMazeSize0" onclick="CustomBtnClick();" type="radio" name="rbMazeSize" value="Small" checked="checked"  /><label for="rbMazeSize0">Small</label>
+                                                <input id="rbMazeSize1" onclick="CustomBtnClick();" type="radio" name="rbMazeSize" value="Large" /><label for="rbMazeSize1">Large</label>
+                                                <input id="rbMazeSize2" onclick="CustomBtnClick();" type="radio" name="rbMazeSize" value="XL" /><label for="rbMazeSize2">XL</label>
+                                                <input id="rbMazeSize3" onclick="CustomBtnClick();" type="radio" name="rbMazeSize" value="XXL" /><label for="rbMazeSize3">XXL</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Difficulty:</td>
+                                            <td class="radiobuttons brown" style="padding:3px;">
+                                                <input id="rbDifficulty0" onclick="CustomBtnClick();" type="radio" name="rbDifficulty" value="Simple" checked="checked"  /><label for="rbDifficulty0">Simple</label>
+                                                <input id="rbDifficulty1" onclick="CustomBtnClick();" type="radio" name="rbDifficulty" value="Easy" /><label for="rbDifficulty1">Easy</label>
+                                                <input id="rbDifficulty2" onclick="CustomBtnClick();" type="radio" name="rbDifficulty" value="Hard" /><label for="rbDifficulty2">Hard</label>
+                                                <input id="rbDifficulty3" onclick="CustomBtnClick();" type="radio" name="rbDifficulty" value="Krazy" /><label for="rbDifficulty3">Krazy</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Complexity:</td>
+                                            <td class="radiobuttons brown"   style="padding:3px;">
+                                                <input id="rbComplexity0" onclick="CustomBtnClick();" type="radio" name="rbComplexity" value="OFF" checked="checked"  /><label for="rbComplexity0">OFF</label>
+                                                <input id="rbComplexity1" onclick="CustomBtnClick();" type="radio" name="rbComplexity" value="Complex" /><label for="rbComplexity1">ON</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Mirror Map:</td>
+                                            <td class="radiobuttons brown"   style="padding:3px;">
+                                                <input id="rbMirror0" onclick="CustomBtnClick();" type="radio" name="rbMirror" value="OFF" checked="checked"  /><label for="rbMirror0">OFF</label>
+                                                <input id="rbMirror1" onclick="CustomBtnClick();" type="radio" name="rbMirror" value="Mirrored" /><label for="rbMirror1">ON</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td  align="right" class="menuText">Speed:</td>
+                                            <td class="radiobuttons brown"   style="padding:3px;">
+                                                <input id="rbSpeed0" onclick="CustomBtnClick();" type="radio" name="rbSpeed" value="Default" checked="checked" /><label for="rbSpeed0">Default</label>
+                                                <input id="rbSpeed1" onclick="CustomBtnClick();" type="radio" name="rbSpeed" value="Split-Speed" /><label for="rbSpeed1">Split</label> 
+                                                <input id="rbSpeed2" onclick="CustomBtnClick();" type="radio" name="rbSpeed" value="Fast"  /><label for="rbSpeed2">Fast</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Walls:</td>
+                                            <td class="radiobuttons brown"  style="padding:3px;" >
+                                                <input id="rbWalls0" onclick="CustomBtnClick();" type="radio" name="rbWalls" value="Default" checked="checked" /><label for="rbWalls0">Default</label>
+                                                <input id="rbWalls1" onclick="CustomBtnClick();" type="radio" name="rbWalls" value="Wall-Spikes" /><label for="rbWalls1">Spikes</label>
+                                                <input id="rbWalls2" onclick="CustomBtnClick();" type="radio" name="rbWalls" value="Wall-Bombs" /><label for="rbWalls2">Bombs</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Bombs:</td>
+                                            <td class="radiobuttons brown"  style="padding:3px;">
+                                                <input id="rbBombs0" onclick="CustomBtnClick();" type="radio" name="rbBombs" value="OFF" checked="checked" /><label for="rbBombs0">OFF</label>
+                                                <input id="rbBombs1" onclick="CustomBtnClick();" type="radio" name="rbBombs" value="Few-Bombs" /><label for="rbBombs1">Few</label>
+                                                <input id="rbBombs2" onclick="CustomBtnClick();" type="radio" name="rbBombs" value="Many-Bombs" /><label for="rbBombs2">Many</label>
+                                                <input id="rbBombs3" onclick="CustomBtnClick();" type="radio" name="rbBombs" value="Full-Bombs" /><label for="rbBombs3">Full</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td align="right" class="menuText">Power-Ups:</td>
+                                            <td class="radiobuttons brown"  style="padding:3px;">
+                                                <input id="rbPowerUps0" onclick="CustomBtnClick();" type="radio" name="rbPowerUps" value="OFF" checked="checked" /><label for="rbPowerUps0">OFF</label>
+                                                <input id="rbPowerUps1" onclick="CustomBtnClick();" type="radio" name="rbPowerUps" value="Few-PowerUps" /><label for="rbPowerUps1">Few</label>
+                                                <input id="rbPowerUps2" onclick="CustomBtnClick();" type="radio" name="rbPowerUps" value="Many-PowerUps" /><label for="rbPowerUps2">Many</label>
+                                                <input id="rbPowerUps3" onclick="CustomBtnClick();" type="radio" name="rbPowerUps" value="Full-PowerUps" /><label for="rbPowerUps3">Full</label>
+                                            </td>
+                                      </tr>
+                                      <tr>
+                                            <td  align="right" class="menuText">Boosts:</td>
+                                            <td class="radiobuttons brown"   style="padding:3px;">
+                                                <input id="rbBoosts0" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="OFF" checked="checked" /><label for="rbBoosts0">OFF</label>
+                                                <input id="rbBoosts1" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="Few-Boosts"  /><label for="rbBoosts1">Few</label>
+                                                <input id="rbBoosts2" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="Many-Boosts"  /><label for="rbBoosts2">Many</label>
+                                                <input id="rbBoosts3" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="Full-Boosts"  /><label for="rbBoosts3">Full</label>
+                                                <input id="rbBoosts4" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="Crumb-Boosts"  /><label for="rbBoosts4">Crumbs</label>
+                                                <input id="rbBoosts5" onclick="CustomBtnClick();" type="radio" name="rbBoosts" value="YBR-Boosts"  /><label for="rbBoosts5">YBR</label>
+                                            </td>
+                                      </tr>
+                                </tbody>
+                              </table>
+                           </div> 
+                       </div> 
+                  </div> 
+                 </td>  
+                 <td  align="left" valign="top" style="width:30%; padding-left:20px; padding-top:42px;" > 
+                    <table  align="left"  width="250px"  cellpadding="0"   cellspacing="0"   class="containerSidebar" >
+                        <tbody>
+                                <tr> 
+                                    <td colspan="2" style="padding:5px;"></td>
+                                </tr>
+                                <tr > 
+                                    <td colspan="2" valign="middle" align="center" class="menuHeaderText" >Downloads</td>
+                                </tr>
+                                <tr> 
+                                    <td colspan="2" style="padding:5px;"></td>
+                                </tr>
+                                <tr> 
+                                    <td colspan="2" style="padding:5px;"><span id="idBowserMsg" class="menuText" style="color:Red;">&nbsp;</span></td>
+                                </tr>
+                                <tr> 
+                                    <td  style="padding:10px;">  
+		                                <a id="aPngFile" class="buttonGrey" href="#"  download="MazeKraze.png"  onclick="downloadingPng();"  >PNG: Current Map</a>
+                                    </td>
+                                </tr>
+                                <tr> 
+                                    <td  style="padding:10px;">  
+		                                <a  id="aPngFiles"class="buttonGrey" href="#" onclick="downloadAllLevels();" >PNGs: ALL 30 Levels</a>
+                                    </td>
+                                </tr>
+                                <tr> 
+                                    <td  style="padding:10px;">  
+		                                <a id="aJsonFile1" class="buttonGrey" href="#"  download="Race_1P_2P.json"  >JSON: Race 1P & 2P</a>
+                                    </td>
+                                </tr>
+                                <tr> 
+                                    <td   style="padding:10px;">  
+		                                <a id="aJsonFile2" class="buttonGrey" href="#"  download="MarsBall.json"  >JSON: Mars Ball</a>
+                                    </td>
+                                </tr>
+                                <tr> 
+                                    <td align="center" style="padding:15px; font-size:20px;"><a id="siteTest1" target="_blank" href="http://tagpro-maptest.koalabeast.com/testmap">Open Testing Site</a></td>      
+                                </tr>
+                        </tbody>
+                    </table>
+                </td>
+             </tr>
+            <tr> 
+                <td colspan="3" align="center" >
+                    <span id="statusText" class="menuText"  style="font-size:18px; color:#ffff00; padding:0px; padding-right:3px;" ></span>
+                    <input style=" font-size:12px;" type="button" name="RefreshMap" value="Refresh"  onclick="buildMap();"  /> 
+                </td>
+            </tr> 
+             <tr>
+                 <td colspan="3" valign="top" align="center" style="width:100%; margin:0px; padding:0px;padding-left:100px; " >
+                     <iframe id="frmPreview" width="300px" height="120px" frameborder="0" scrolling="no"  />
+                </td>
+             </tr>   
+        </tbody>
+        </table>
+    </form>
+  </body>
+</html>
+
+
+
